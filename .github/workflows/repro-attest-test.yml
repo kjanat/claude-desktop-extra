@@ -1,0 +1,206 @@
+name: Repro & Attest Test
+
+# TESTING-ONLY workflow. Builds the amd64 tarball twice from one verified .deb,
+# compares the hashes, attests the result, and publishes a prerelease. Delete
+# before upstreaming; the reproducibility work itself lives in
+# scripts/build-patched-tarball.sh.
+
+on:
+  push: { branches: [repro-attest] }
+  workflow_dispatch: null
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: repro-attest-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repro:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.compare.outputs.version }}
+      sha_a: ${{ steps.compare.outputs.sha_a }}
+      sha_b: ${{ steps.compare.outputs.sha_b }}
+      tar_sha_a: ${{ steps.compare.outputs.tar_sha_a }}
+      tar_sha_b: ${{ steps.compare.outputs.tar_sha_b }}
+      reproducible: ${{ steps.compare.outputs.reproducible }}
+      tar_reproducible: ${{ steps.compare.outputs.tar_reproducible }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Free disk space
+        run: |
+          # Two 230 MB tarballs plus two extracted trees plus an Arch image do
+          # not fit alongside the runner's preinstalled toolchains.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+
+      - name: Download & GPG/SHA-verify official amd64 .deb
+        run: |
+          bash .github/scripts/apt-fetch-verify.sh download amd64 deb-input
+          ls -la deb-input/
+
+      - name: Build toolchain image
+        run: |
+          # One image, two container runs: both builds then see the same nim,
+          # node and asar. Resolving packages per build would let an upstream
+          # Arch push land between them and show up as a false mismatch.
+          cat > Dockerfile.repro <<'DOCKERFILE'
+          FROM archlinux:base-devel
+          RUN pacman -Syu --noconfirm && \
+              pacman -S --noconfirm python nodejs npm git imagemagick shellcheck \
+                                    nim nimble binutils tar zstd xz gnupg && \
+              useradd -m builder && \
+              echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
+          RUN nimble install -y regex
+          RUN cd /tmp && git clone https://aur.archlinux.org/yay-bin.git && \
+              chown -R builder:builder yay-bin && \
+              cd yay-bin && su builder -c 'makepkg -si --noconfirm' && \
+              su builder -c 'yay -S --noconfirm asar'
+          DOCKERFILE
+          docker build -f Dockerfile.repro -t claude-repro:local .
+
+      - name: Stage build input
+        run: |
+          mkdir -p build-input
+          cp deb-input/claude-desktop_*_amd64.deb build-input/claude.deb
+          cp -r scripts patches js packaging build-input/
+
+      - name: Build A
+        run: |
+          mkdir -p out-a
+          docker run --rm \
+            -v "$PWD/build-input:/input:ro" \
+            -v "$PWD/out-a:/output" \
+            claude-repro:local \
+            bash -c 'CLAUDE_GPG_VERIFY=0 SKIP_SMOKE_TEST=1 \
+              bash /input/scripts/build-patched-tarball.sh /input/claude.deb /output'
+          sudo chown -R "$(id -u):$(id -g)" out-a
+          cat out-a/build-info.txt
+
+      - name: Build B
+        run: |
+          mkdir -p out-b
+          docker run --rm \
+            -v "$PWD/build-input:/input:ro" \
+            -v "$PWD/out-b:/output" \
+            claude-repro:local \
+            bash -c 'CLAUDE_GPG_VERIFY=0 SKIP_SMOKE_TEST=1 \
+              bash /input/scripts/build-patched-tarball.sh /input/claude.deb /output'
+          sudo chown -R "$(id -u):$(id -g)" out-b
+          cat out-b/build-info.txt
+
+      - name: Compare
+        id: compare
+        run: |
+          # shellcheck disable=SC1091
+          . out-a/build-info.txt
+          A_GZ="$SHA256"; A_TAR="$TAR_SHA256"; A_EPOCH="$SOURCE_DATE_EPOCH"; A_VER="$VERSION"
+          # shellcheck disable=SC1091
+          . out-b/build-info.txt
+          B_GZ="$SHA256"; B_TAR="$TAR_SHA256"; B_EPOCH="$SOURCE_DATE_EPOCH"
+
+          {
+            echo "version=${A_VER}"
+            echo "sha_a=${A_GZ}"
+            echo "sha_b=${B_GZ}"
+            echo "tar_sha_a=${A_TAR}"
+            echo "tar_sha_b=${B_TAR}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "epoch A: $A_EPOCH"
+          echo "epoch B: $B_EPOCH"
+          echo "gz    A: $A_GZ"
+          echo "gz    B: $B_GZ"
+          echo "tar   A: $A_TAR"
+          echo "tar   B: $B_TAR"
+
+          if [ "$A_GZ" = "$B_GZ" ]; then
+            echo "reproducible=true" >> "$GITHUB_OUTPUT"
+            echo "REPRODUCIBLE: .tar.gz hashes match"
+          else
+            echo "reproducible=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::.tar.gz hashes DIFFER"
+          fi
+
+          if [ "$A_TAR" = "$B_TAR" ]; then
+            echo "tar_reproducible=true" >> "$GITHUB_OUTPUT"
+            echo "REPRODUCIBLE: uncompressed tar hashes match"
+          else
+            echo "tar_reproducible=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::uncompressed tar hashes DIFFER — divergence is in the tree, not the compressor"
+          fi
+
+      - name: Diff the two trees when they diverge
+        if: steps.compare.outputs.tar_reproducible == 'false'
+        run: |
+          # Names the diverging members instead of leaving a bare hash mismatch.
+          mkdir -p cmp/a cmp/b
+          tar -xzf out-a/claude-desktop-*-linux.tar.gz -C cmp/a
+          tar -xzf out-b/claude-desktop-*-linux.tar.gz -C cmp/b
+          diff -rq cmp/a cmp/b > tree-diff.txt 2>&1 || true
+          echo "=== differing files ==="
+          cat tree-diff.txt
+          wc -l tree-diff.txt
+
+      - name: Upload tree diff
+        if: steps.compare.outputs.tar_reproducible == 'false'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tree-diff
+          path: tree-diff.txt
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with: { subject-path: out-a/claude-desktop-*-linux.tar.gz }
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.compare.outputs.version }}
+          SHA_A: ${{ steps.compare.outputs.sha_a }}
+          SHA_B: ${{ steps.compare.outputs.sha_b }}
+          TAR_A: ${{ steps.compare.outputs.tar_sha_a }}
+          TAR_B: ${{ steps.compare.outputs.tar_sha_b }}
+          REPRO: ${{ steps.compare.outputs.reproducible }}
+          TAR_REPRO: ${{ steps.compare.outputs.tar_reproducible }}
+        run: |
+          TAG="repro-test-${VERSION}-${GITHUB_RUN_NUMBER}"
+          {
+            echo "Reproducibility probe for Claude Desktop ${VERSION}, amd64."
+            echo ""
+            echo "Two builds from one GPG-verified upstream .deb, same toolchain image."
+            echo "The tarball omits the Rust CU bridges."
+            echo ""
+            echo "| layer   | build A      | build B | match |"
+            echo "| ------- | ------------ | ------------ | ------------ |"
+            echo "| .tar.gz | \`${SHA_A}\` | \`${SHA_B}\` | ${REPRO}     |"
+            echo "| .tar    | \`${TAR_A}\` | \`${TAR_B}\` | ${TAR_REPRO} |"
+            echo ""
+            echo "Verify the attestation:"
+            echo ""
+            echo '```'
+            echo "gh attestation verify claude-desktop-${VERSION}-linux.tar.gz --repo ${GITHUB_REPOSITORY}"
+            echo '```'
+          } > notes.md
+
+          gh release create "$TAG" \
+            --title "Repro probe ${VERSION} (run ${GITHUB_RUN_NUMBER})" \
+            --notes-file notes.md \
+            --prerelease \
+            out-a/claude-desktop-*-linux.tar.gz
+
+      - name: Fail if not reproducible
+        if: steps.compare.outputs.reproducible == 'false'
+        run: |
+          echo "::error::Builds are not byte-identical. Prerelease and attestation were still published; see the tree-diff artifact."
+          exit 1
