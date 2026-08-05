@@ -991,7 +991,7 @@ _diagnose() {
     # a new instance. Read the bundled version file instead.
     if [[ -n ${_electron_real:-} ]]; then
         local _vfile
-        _vfile="$(dirname "$_electron_real")/version"
+        _vfile="$(dirname "${_electron_real}")/version"
         if [[ -r $_vfile ]]; then
             echo "electron version file = $(<"$_vfile")"
         else

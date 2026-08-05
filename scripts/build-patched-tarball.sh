@@ -39,7 +39,7 @@ PATCHES_DIR="$PROJECT_DIR/patches"
 # Every mktemp dir registers here so no build path can leak one.
 TMPDIRS=()
 cleanup_tmpdirs() {
-    if [ ${#TMPDIRS[@]} -gt 0 ]; then
+    if [[ ${#TMPDIRS[@]} -gt 0 ]]; then
         rm -rf "${TMPDIRS[@]}"
     fi
 }
@@ -49,8 +49,8 @@ trap cleanup_tmpdirs EXIT
 # so Nim can write .nimcache and compiled binaries alongside the sources.
 if [ -d "$PATCHES_DIR" ] && ! touch "$PATCHES_DIR/.write-test" 2>/dev/null; then
     WRITABLE_ROOT="$(mktemp -d)"
-    TMPDIRS+=("$WRITABLE_ROOT")
-    WRITABLE_PATCHES="$WRITABLE_ROOT/patches"
+    TMPDIRS+=("${WRITABLE_ROOT}")
+    WRITABLE_PATCHES="${WRITABLE_ROOT}/patches"
     cp -r "$PATCHES_DIR" "$WRITABLE_PATCHES"
     # Also copy js/ dir (Nim patches embed snippets via staticRead with ../js/ paths)
     [ -d "$PROJECT_DIR/js" ] && cp -r "$PROJECT_DIR/js" "$(dirname "$WRITABLE_PATCHES")/js"
@@ -205,7 +205,7 @@ PY
         # Dearmor the ASCII key into a binary keyring, then gpgv the detached sig
         # against it (the standard apt-secure pattern — no trust DB, no keyserver).
         TMP_GNUPG="$(mktemp -d)"
-        TMPDIRS+=("$TMP_GNUPG")
+        TMPDIRS+=("${TMP_GNUPG}")
         KEYRING="$WORK_DIR/claude-desktop.gpg"
         gpg --homedir "$TMP_GNUPG" --batch --yes --dearmor -o "$KEYRING" "$GPG_KEY" 2>/dev/null
         if ! gpgv --keyring "$KEYRING" "$WORK_DIR/Release.gpg" "$WORK_DIR/Release" 2>"$WORK_DIR/gpgv.log"; then
@@ -219,22 +219,22 @@ PY
         # anywhere in the file would also accept the entry for another
         # architecture's index. Mirrors .github/scripts/apt-fetch-verify.sh.
         PKG_REL="${DEB_SOURCE#"${DISTS_DIR}/"}"
-        PKG_SHA="$(sha256sum "$PKGFILE" | cut -d' ' -f1)"
-        CLAIMED_SHA="$(awk -v rel="$PKG_REL" '
+        PKG_SHA="$(sha256sum "${PKGFILE}" | cut -d' ' -f1)"
+        CLAIMED_SHA="$(awk -v rel="${PKG_REL}" '
             /^[A-Za-z0-9-]+:$/ { in_sha = ($0 == "SHA256:"); next }
             in_sha && $3 == rel { print $1; exit }
-        ' "$WORK_DIR/Release")"
-        if [ -z "$CLAIMED_SHA" ]; then
-            log_error "signed Release lists no SHA256 for $PKG_REL — chain broken"
+        ' "${WORK_DIR}/Release")"
+        if [[ -z "${CLAIMED_SHA}" ]]; then
+            log_error "signed Release lists no SHA256 for ${PKG_REL} — chain broken"
             exit 1
         fi
-        if [ "$CLAIMED_SHA" != "$PKG_SHA" ]; then
-            log_error "Packages SHA256 mismatch for $PKG_REL"
-            log_error "  Release: $CLAIMED_SHA"
-            log_error "  fetched: $PKG_SHA"
+        if [[ "${CLAIMED_SHA}" != "${PKG_SHA}" ]]; then
+            log_error "Packages SHA256 mismatch for ${PKG_REL}"
+            log_error "  Release: ${CLAIMED_SHA}"
+            log_error "  fetched: ${PKG_SHA}"
             exit 1
         fi
-        log_info "Release signature OK; $PKG_REL matches its signed entry"
+        log_info "Release signature OK; ${PKG_REL} matches its signed entry"
     else
         log_warn "GPG verification disabled (CLAUDE_GPG_VERIFY=0) — trusting HTTPS only"
     fi
@@ -267,7 +267,7 @@ mkdir -p "$AR_DIR"
 # control.tar.* → read Version + Architecture from DEBIAN/control
 CONTROL_DIR="$WORK_DIR/control"
 mkdir -p "$CONTROL_DIR"
-CONTROL_TAR="$(find "$AR_DIR" -maxdepth 1 -name 'control.tar.*' -print -quit)"
+CONTROL_TAR="$(find "${AR_DIR}" -maxdepth 1 -name 'control.tar.*' -print -quit)"
 [ -n "$CONTROL_TAR" ] || { log_error "control.tar.* not found in .deb"; exit 1; }
 tar -xf "$CONTROL_TAR" -C "$CONTROL_DIR"
 
@@ -280,7 +280,7 @@ log_info "Detected version: $VERSION (arch: $DEB_ARCH)"
 # tar auto-detects xz/zst/gz.
 DATA_DIR="$WORK_DIR/data"
 mkdir -p "$DATA_DIR"
-DATA_TAR="$(find "$AR_DIR" -maxdepth 1 -name 'data.tar.*' -print -quit)"
+DATA_TAR="$(find "${AR_DIR}" -maxdepth 1 -name 'data.tar.*' -print -quit)"
 [ -n "$DATA_TAR" ] || { log_error "data.tar.* not found in .deb"; exit 1; }
 tar -xf "$DATA_TAR" -C "$DATA_DIR"
 
@@ -659,16 +659,16 @@ echo "  Arch:     $DEB_ARCH"
 echo "  Electron: ${ELECTRON_VERSION:-unknown}"
 echo "  Tarball:  $TARBALL_FILE"
 echo "  SHA256:   $SHA256"
-echo "  TAR SHA:  $TAR_SHA256"
-echo "  EPOCH:    $SOURCE_DATE_EPOCH"
+echo "  TAR SHA:  ${TAR_SHA256}"
+echo "  EPOCH:    ${SOURCE_DATE_EPOCH}"
 
 # Write metadata file for CI / orchestrators
 cat > "$OUTPUT_DIR/build-info.txt" << EOF
 VERSION="$VERSION"
 TARBALL="$TARBALL_FILE"
 SHA256="$SHA256"
-TAR_SHA256="$TAR_SHA256"
-SOURCE_DATE_EPOCH="$SOURCE_DATE_EPOCH"
+TAR_SHA256="${TAR_SHA256}"
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
 ARCH="$DEB_ARCH"
 DEB_VERSION="$VERSION"
 ELECTRON_VERSION="${ELECTRON_VERSION:-unknown}"
