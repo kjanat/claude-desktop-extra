@@ -141,7 +141,8 @@ jobs:
           FROM archlinux:base-devel
           RUN pacman -Syu --noconfirm && \
               pacman -S --noconfirm python nodejs npm git imagemagick shellcheck \
-                                    nim nimble binutils tar zstd xz gnupg asar
+                                    nim nimble binutils tar zstd xz gnupg asar \
+                                    desktop-file-utils
           RUN nimble install -y regex && \
               printf 'import regex\ndiscard re2"a"\n' > /tmp/probe.nim && \
               nim c --hints:off -o:/tmp/probe /tmp/probe.nim && rm /tmp/probe /tmp/probe.nim
