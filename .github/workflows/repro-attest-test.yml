@@ -191,16 +191,17 @@ jobs:
 
       - name: Publish prerelease
         env:
+          GH_REPO: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.compare.outputs.version }}
+          RELEASE_NAME: Repro probe ${{ steps.compare.outputs.version }} (run ${{ github.run_number }})
+          RELEASE_TAG: repro-test-${{ steps.compare.outputs.version }}-${{ github.run_number }}
+          REPRO: ${{ steps.compare.outputs.reproducible }}
           SHA_A: ${{ steps.compare.outputs.sha_a }}
           SHA_B: ${{ steps.compare.outputs.sha_b }}
           TAR_A: ${{ steps.compare.outputs.tar_sha_a }}
           TAR_B: ${{ steps.compare.outputs.tar_sha_b }}
-          REPRO: ${{ steps.compare.outputs.reproducible }}
           TAR_REPRO: ${{ steps.compare.outputs.tar_reproducible }}
-          RELEASE_TAG: repro-test-${{ steps.compare.outputs.version }}-${{ github.run_number }}
-          RELEASE_NAME: Repro probe ${{ steps.compare.outputs.version }} (run ${{ github.run_number }})
+          VERSION: ${{ steps.compare.outputs.version }}
         working-directory: out-a
         run: |
           TARBALL=(claude-desktop-*-linux.tar.gz)
@@ -219,9 +220,9 @@ jobs:
 
           Verify the attestation:
 
-          \```sh
+          ~~~sh
           gh attestation verify ${TARBALL[0]} --repo ${GITHUB_REPOSITORY}
-          \```
+          ~~~
           EOF
 
       - name: Fail if not reproducible
