@@ -605,10 +605,11 @@ log_info "Creating tarball: ${TARBALL_FILE}"
 
 # SOURCE_DATE_EPOCH pins every mtime tar records. When unset, derive it from the
 # newest mtime in the upstream tree — Anthropic stamps those into the .deb, so it
-# is constant for a given input .deb.
+# is constant for a given input .deb. The `|| true` keeps a failed pipeline from
+# aborting the assignment under `set -e`, so the fallback below is reachable.
 if [[ -z "${SOURCE_DATE_EPOCH:-}" ]]; then
-	SOURCE_DATE_EPOCH="$(find "${DATA_DIR}" -printf '%T@\n' 2>/dev/null | cut -d. -f1 | sort -n | tail -1)"
-	[[ -n "${SOURCE_DATE_EPOCH}" ]] || SOURCE_DATE_EPOCH=0
+	SOURCE_DATE_EPOCH="$(find "${DATA_DIR}" -printf '%T@\n' 2>/dev/null | cut -d. -f1 | sort -n | tail -1 || true)"
+	[[ "${SOURCE_DATE_EPOCH}" =~ ^[0-9]+$ ]] || SOURCE_DATE_EPOCH=0
 fi
 export SOURCE_DATE_EPOCH
 log_info "SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH}"
@@ -616,7 +617,7 @@ log_info "SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH}"
 # pigz and gzip emit different byte streams for identical input, so the
 # compressor is pinned. CLAUDE_ALLOW_PIGZ=1 trades byte-identical output for
 # speed on local builds.
-if [[ "${CLAUDE_ALLOW_PIGZ:-0}" = "1" ]] && command -v pigz &>/dev/null; then
+if [[ "${CLAUDE_ALLOW_PIGZ:-0}" == "1" ]] && command -v pigz &>/dev/null; then
 	GZIP_PROG="pigz"
 	log_warn "Using pigz (CLAUDE_ALLOW_PIGZ=1) — output is NOT byte-reproducible"
 else
@@ -636,8 +637,12 @@ TAR_FILE="${TARBALL_FILE%.gz}"
 
 # Hash the uncompressed layer too: when this matches across two builds but the
 # .gz does not, the divergence is in the compressor rather than the tree.
-TAR_SHA256=$(sha256sum "${TAR_FILE}" | cut -d' ' -f1)
-"${GZIP_PROG}" -n -9 -c "${TAR_FILE}" >"${TARBALL_FILE}"
+TAR_SHA256="$(sha256sum "${TAR_FILE}" | cut -d' ' -f1)"
+
+# Compress to a temporary name and rename on success, so a failure never leaves
+# a truncated archive at the path every packager reads by glob.
+"${GZIP_PROG}" -n -9 -c "${TAR_FILE}" >"${TARBALL_FILE}.partial"
+mv "${TARBALL_FILE}.partial" "${TARBALL_FILE}"
 rm -f "${TAR_FILE}"
 
 # Calculate SHA256
