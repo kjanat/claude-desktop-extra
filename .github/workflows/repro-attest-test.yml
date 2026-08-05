@@ -4,17 +4,10 @@
 # scripts/build-patched-tarball.sh.
 ---
 name: Repro & Attest Test
-
-on:
-  push: { branches: [repro-attest] }
-  workflow_dispatch: null
-
-permissions:
-  contents: read
-
-concurrency:
-  group: repro-attest-${{ github.ref }}
-  cancel-in-progress: true
+on: { push: { branches: [repro-attest] }, workflow_dispatch: null }
+concurrency: { group: "repro-attest-${{ github.ref }}", cancel-in-progress: true }
+permissions: { contents: read }
+env: { arch: amd64 }
 
 jobs:
   setup:
@@ -44,14 +37,14 @@ jobs:
         uses: actions/checkout@v7
         with: { persist-credentials: false }
 
-      - name: Download & GPG/SHA-verify official amd64 .deb
-        run: bash .github/scripts/apt-fetch-verify.sh download amd64 deb-input; ls -la deb-input/
+      - name: Download & GPG/SHA-verify official ${{ env.arch }} .deb
+        run: bash .github/scripts/apt-fetch-verify.sh download "${arch}" deb-input; ls -la deb-input/
 
       - name: Upload verified .deb
         uses: actions/upload-artifact@v7
         with:
           name: verified-deb
-          path: deb-input/claude-desktop_*_amd64.deb
+          path: deb-input/claude-desktop_*_${{ env.arch }}.deb
           retention-days: 1
           compression-level: 0
 
@@ -63,11 +56,11 @@ jobs:
     steps:
       - name: Resolve revision
         id: rev
+        env: { REPO: "${{ matrix.repo }}" }
         run: |
           sha="$(git ls-remote "https://github.com/patrickjaja/${REPO}.git" HEAD | cut -f1)"
           echo "sha=${sha}" >> "${GITHUB_OUTPUT}"
           echo "${REPO} ${sha}"
-        env: { REPO: "${{ matrix.repo }}" }
 
       - name: Cache
         id: cache
@@ -76,11 +69,11 @@ jobs:
 
       - name: Install build deps
         if: steps.cache.outputs.cache-hit != 'true' && matrix.apt != ''
+        env: { APT: "${{ matrix.apt }}" }
         run: |
           read -ra pkgs <<<"${APT}"
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends pkg-config clang cmake "${pkgs[@]}"
-        env: { APT: "${{ matrix.apt }}" }
 
       - name: Checkout bridge source
         if: steps.cache.outputs.cache-hit != 'true'
@@ -131,6 +124,7 @@ jobs:
     needs: [setup, prepare, bridges]
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env: { input: build-input }
     strategy: { fail-fast: false, matrix: { leg: [a, b] } }
     steps:
       - name: Checkout repository
@@ -147,52 +141,41 @@ jobs:
           FROM archlinux:base-devel
           RUN pacman -Syu --noconfirm && \
               pacman -S --noconfirm python nodejs npm git imagemagick shellcheck \
-                                    nim nimble binutils tar zstd xz gnupg && \
-              useradd -m builder && \
-              echo 'builder ALL=(ALL) NOPASSWD: ALL' >> /etc/sudoers
-          RUN nimble install -y regex
-          RUN cd /tmp && git clone https://aur.archlinux.org/yay-bin.git && \
-              chown -R builder:builder yay-bin && \
-              cd yay-bin && su builder -c 'makepkg -si --noconfirm' && \
-              su builder -c 'yay -S --noconfirm asar'
+                                    nim nimble binutils tar zstd xz gnupg asar
+          RUN nimble install -y regex && \
+              printf 'import regex\ndiscard re2"a"\n' > /tmp/probe.nim && \
+              nim c --hints:off -o:/tmp/probe /tmp/probe.nim && rm /tmp/probe /tmp/probe.nim
           DOCKERFILE
           docker build -f Dockerfile.repro -t claude-repro:local .
 
       - name: Download bridges
         uses: actions/download-artifact@v8
-        with: { pattern: bridge-*, merge-multiple: true, path: bridges }
+        with: { pattern: bridge-*, merge-multiple: true, path: "${{ env.input }}" }
 
       - name: Build
         env: { BRIDGES: "${{ needs.setup.outputs.bridges }}" }
         run: |
-          mkdir -p build-input out
-          cp deb-input/claude-desktop_*_amd64.deb build-input/claude.deb
-          cp -r scripts patches js packaging build-input/
-          cp bridges/* build-input/
-          chmod +x build-input/*-bridge
+          mkdir -p out
+          cp "deb-input/claude-desktop_"*"_${arch}.deb" "${input}/claude.deb"
+          cp -r scripts patches js packaging "${input}/"
+          chmod +x "${input}/"*"-bridge"
 
           bins="$(jq -r '.[].bin' <<<"${BRIDGES}")"
           bridge_env=()
           while read -r bin; do
-            [[ -f "build-input/${bin}" ]] || {
-              echo "::error::bridge ${bin} is missing"
-              exit 1
-            }
+            [[ -f "${input}/${bin}" ]] || { echo "::error::bridge ${bin} is missing"; exit 1; }
             var="${bin^^}"
             bridge_env+=(-e "${var//-/_}_BIN=/input/${bin}")
           done <<<"${bins}"
 
           docker run --rm \
-            -v "${PWD}/build-input:/input:ro" \
+            -v "${PWD}/${input}:/input:ro" \
             -v "${PWD}/out:/output" \
             -e CLAUDE_GPG_VERIFY=0 \
             -e SKIP_SMOKE_TEST=1 \
             "${bridge_env[@]}" \
             claude-repro:local \
             bash /input/scripts/build-patched-tarball.sh /input/claude.deb /output
-          uid="$(id -u)"
-          gid="$(id -g)"
-          sudo chown -R "${uid}:${gid}" out
           cat out/build-info.txt
 
       - name: Upload build-info
@@ -301,11 +284,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         working-directory: out/tarball-a
         run: |
+          shopt -s nullglob
+
+          RELEASE="repro-test-${version}-${GITHUB_RUN_NUMBER}"
           TARBALL=(claude-desktop-*-linux.tar.gz)
-          cat <<EOF | tee -a "${GITHUB_STEP_SUMMARY}" | gh release create "repro-test-${version}-${GITHUB_RUN_NUMBER}" \
+          (( ${#TARBALL[@]} == 1 )) || { echo "::error::verwachtte 1 tarball, kreeg ${#TARBALL[@]}"; exit 1; }
+
+          cat <<EOF | tee -a "${GITHUB_STEP_SUMMARY}" | gh release create "${RELEASE}" \
             --title "Repro probe ${version} (run ${GITHUB_RUN_NUMBER})" --prerelease \
+            --target "${GITHUB_SHA}" \
             --notes-file - "${TARBALL[0]}"
-          Reproducibility probe for Claude Desktop ${version}, amd64.
+          Reproducibility probe for Claude Desktop ${version}, ${arch}.
 
           Two builds on separate runners from one GPG-verified upstream .deb.
           The Computer Use bridges are built once, at a pinned commit, and
@@ -321,7 +310,9 @@ jobs:
           Verify it yourself:
 
           ~~~sh
-          gh attestation verify ${TARBALL[0]} --repo ${GITHUB_REPOSITORY}
+          export GH_REPO="${GH_REPO}"
+          gh release download "${RELEASE}"
+          gh attestation verify ${TARBALL[0]}
           ~~~
           EOF
 
