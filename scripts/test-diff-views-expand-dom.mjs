@@ -814,7 +814,7 @@ for (const [name, fx, run, font] of scenarios) {
     continue;
   }
   const lines = m[1].split("\n").filter(Boolean)
-    .map((l) => l.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
+    .map((l) => l.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"));
   let n = 0;
   let s = 0;
   for (const line of lines) {

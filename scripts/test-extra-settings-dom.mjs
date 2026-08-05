@@ -1079,7 +1079,7 @@ for (const [name, fixture] of scenarios) {
     fail++;
     continue;
   }
-  const lines = m[1].split("\n").filter(Boolean).map((l) => l.replace(/&quot;/g, '"').replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">"));
+  const lines = m[1].split("\n").filter(Boolean).map((l) => l.replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&"));
   let n = 0;
   for (const line of lines) {
     if (line.startsWith("PASS")) { pass++; n++; continue; }
