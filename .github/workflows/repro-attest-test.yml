@@ -203,6 +203,7 @@ jobs:
 
       - name: Publish prerelease
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.compare.outputs.version }}
           SHA_A: ${{ steps.compare.outputs.sha_a }}
           SHA_B: ${{ steps.compare.outputs.sha_b }}
@@ -215,9 +216,9 @@ jobs:
         working-directory: out-a
         run: |
           TARBALL=(claude-desktop-*-linux.tar.gz)
-          cat <<EOF | gh release create "${RELEASE_TAG}" \
+          cat <<EOF | tee -a "${GITHUB_STEP_SUMMARY}" | gh release create "${RELEASE_TAG}" \
             --title "${RELEASE_NAME}" --prerelease \
-            --notes-file - "${TARBALL}"
+            --notes-file - "${TARBALL[0]}"
           Reproducibility probe for Claude Desktop ${VERSION}, amd64.
 
           Two builds on separate runners from one GPG-verified upstream .deb.
@@ -231,7 +232,7 @@ jobs:
           Verify the attestation:
 
           \```sh
-          gh attestation verify ${TARBALL} --repo ${GITHUB_REPOSITORY}
+          gh attestation verify ${TARBALL[0]} --repo ${GITHUB_REPOSITORY}
           \```
           EOF
 
