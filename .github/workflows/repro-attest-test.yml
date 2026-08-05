@@ -48,10 +48,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
-      # A 230 MB tarball+tree+Arch do not fit alongside the runner's preinstalled toolchains.
-      - name: Free disk space
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc && df -h /
-
       - name: Download verified .deb
         uses: actions/download-artifact@v8
         with: { name: verified-deb, path: deb-input }
@@ -112,9 +108,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Free disk space
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc && df -h /
-
       - name: Download build-info A
         uses: actions/download-artifact@v8
         with: { name: build-info-a, path: info-a }
@@ -130,31 +123,27 @@ jobs:
       - name: Compare
         id: compare
         run: |
-          # shellcheck disable=SC1091
-          . info-a/build-info.txt
-          A_GZ="${SHA256}"; A_TAR="${TAR_SHA256}"; A_EPOCH="${SOURCE_DATE_EPOCH}"; A_VER="${VERSION}"
-          # shellcheck disable=SC1091
-          . info-b/build-info.txt
-          B_GZ="${SHA256}"; B_TAR="${TAR_SHA256}"; B_EPOCH="${SOURCE_DATE_EPOCH}"
+          while IFS='=' read -r k v; do printf -v "A_${k}" '%s' "${v//\"/}"; done < info-a/build-info.txt
+          while IFS='=' read -r k v; do printf -v "B_${k}" '%s' "${v//\"/}"; done < info-b/build-info.txt
 
           cat <<-EOF >> "${GITHUB_OUTPUT}"
-          	version=${A_VER}
-          	sha_a=${A_GZ}
-          	sha_b=${B_GZ}
-          	tar_sha_a=${A_TAR}
-          	tar_sha_b=${B_TAR}
+          	version=${A_VERSION}
+          	sha_a=${A_SHA256}
+          	sha_b=${B_SHA256}
+          	tar_sha_a=${A_TAR_SHA256}
+          	tar_sha_b=${B_TAR_SHA256}
           EOF
 
           cat <<-EOF
-          	epoch A: ${A_EPOCH}
-          	epoch B: ${B_EPOCH}
-          	gz    A: ${A_GZ}
-          	gz    B: ${B_GZ}
-          	tar   A: ${A_TAR}
-          	tar   B: ${B_TAR}
+          	epoch A: ${A_SOURCE_DATE_EPOCH}
+          	epoch B: ${B_SOURCE_DATE_EPOCH}
+          	gz    A: ${A_SHA256}
+          	gz    B: ${B_SHA256}
+          	tar   A: ${A_TAR_SHA256}
+          	tar   B: ${B_TAR_SHA256}
           EOF
 
-          if [[ "${A_GZ}" == "${B_GZ}" ]]; then
+          if [[ "${A_SHA256}" == "${B_SHA256}" ]]; then
             echo "reproducible=true" >> "${GITHUB_OUTPUT}"
             echo "REPRODUCIBLE: .tar.gz hashes match"
           else
@@ -162,7 +151,7 @@ jobs:
             echo "::warning::.tar.gz hashes DIFFER"
           fi
 
-          if [[ "${A_TAR}" == "${B_TAR}" ]]; then
+          if [[ "${A_TAR_SHA256}" == "${B_TAR_SHA256}" ]]; then
             echo "tar_reproducible=true" >> "${GITHUB_OUTPUT}"
             echo "REPRODUCIBLE: uncompressed tar hashes match"
           else
@@ -170,7 +159,6 @@ jobs:
             echo "::warning::uncompressed tar hashes DIFFER — divergence is in the tree, not the compressor"
           fi
 
-      # Only pulled when the hashes disagree, so the common path never moves the second 230 MB artifact.
       - name: Download tarball B
         if: steps.compare.outputs.reproducible == 'false'
         uses: actions/download-artifact@v8
