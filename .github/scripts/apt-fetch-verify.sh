@@ -189,7 +189,7 @@ cmd_download() {
   [ -n "$filename" ] || die "no Filename for ${arch} v${ver}"
   [ -n "$sha" ] || die "no SHA256 for ${arch} v${ver}"
 
-  deb="${out}/$(basename "$filename")"
+  deb="${out}/$(basename "${filename}")"
   log "[download] ${arch} v${ver} -> ${deb}"
   fetch "${APT_BASE}/${filename}" "$deb"
 
