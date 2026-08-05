@@ -288,7 +288,7 @@ jobs:
 
           RELEASE="repro-test-${version}-${GITHUB_RUN_NUMBER}"
           TARBALL=(claude-desktop-*-linux.tar.gz)
-          (( ${#TARBALL[@]} == 1 )) || { echo "::error::verwachtte 1 tarball, kreeg ${#TARBALL[@]}"; exit 1; }
+          (( ${#TARBALL[@]} == 1 )) || { echo "::error::expected 1 tarball, got ${#TARBALL[@]}"; exit 1; }
 
           cat <<EOF | tee -a "${GITHUB_STEP_SUMMARY}" | gh release create "${RELEASE}" \
             --title "Repro probe ${version} (run ${GITHUB_RUN_NUMBER})" --prerelease \
