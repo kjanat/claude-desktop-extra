@@ -158,7 +158,7 @@ jobs:
         run: |
           mkdir -p out
           cp "deb-input/claude-desktop_"*"_${arch}.deb" "${input}/claude.deb"
-          cp -r scripts patches js packaging "${input}/"
+          cp -r scripts patches js packaging PKGBUILD.template "${input}/"
           chmod +x "${input}/"*"-bridge"
 
           bins="$(jq -r '.[].bin' <<<"${BRIDGES}")"
@@ -291,6 +291,20 @@ jobs:
           TARBALL=(claude-desktop-*-linux.tar.gz)
           (( ${#TARBALL[@]} == 1 )) || { echo "::error::expected 1 tarball, got ${#TARBALL[@]}"; exit 1; }
 
+          if [[ "${reproducible}" == "true" && "${tar_reproducible}" == "true" ]]; then
+            table="$(printf '%s\n' \
+              "| layer   | sha256 (A ∪ B)   |" \
+              "| ------- | ---------------- |" \
+              "| .tar.gz | \`${sha_a}\`     |" \
+              "| .tar    | \`${tar_sha_a}\` |")"
+          else
+            table="$(printf '%s\n' \
+              "| layer   | build A          | build B          | match               |" \
+              "| ------- | ---------------- | ---------------- | ------------------- |" \
+              "| .tar.gz | \`${sha_a}\`     | \`${sha_b}\`     | ${reproducible}     |" \
+              "| .tar    | \`${tar_sha_a}\` | \`${tar_sha_b}\` | ${tar_reproducible} |")"
+          fi
+
           cat <<EOF | tee -a "${GITHUB_STEP_SUMMARY}" | gh release create "${RELEASE}" \
             --title "Repro probe ${version} (run ${GITHUB_RUN_NUMBER})" --prerelease \
             --target "${GITHUB_SHA}" \
@@ -298,13 +312,9 @@ jobs:
           Reproducibility probe for Claude Desktop ${version}, ${arch}.
 
           Two builds on separate runners from one GPG-verified upstream .deb.
-          The Computer Use bridges are built once, at a pinned commit, and
-          handed to both legs, so the tarball is a complete package.
+          The Computer Use bridges are built once, at a pinned commit, and handed to both legs, so the tarball is a complete package.
 
-          | layer   | build A          | build B          | match               |
-          | ------- | ---------------- | ---------------- | ------------------- |
-          | .tar.gz | \`${sha_a}\`     | \`${sha_b}\`     | ${reproducible}     |
-          | .tar    | \`${tar_sha_a}\` | \`${tar_sha_b}\` | ${tar_reproducible} |
+          ${table}
 
           Attestation: ${ATTESTATION_URL}
 
@@ -312,7 +322,7 @@ jobs:
 
           ~~~sh
           export GH_REPO="${GH_REPO}"
-          gh release download "${RELEASE}"
+          gh release download "${RELEASE}" --clobber
           gh attestation verify ${TARBALL[0]}
           ~~~
           EOF
