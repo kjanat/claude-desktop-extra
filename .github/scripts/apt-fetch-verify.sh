@@ -181,7 +181,7 @@ cmd_download() {
   local arch="${1:?usage: download <amd64|arm64> <out-dir>}"
   local out="${2:?usage: download <amd64|arm64> <out-dir>}"
   mkdir -p "$out"
-  local line ver filename sha
+  local line ver filename sha deb
   line="$(cmd_resolve "$arch")"
   ver="$(echo "$line" | cut -f1)"
   filename="$(echo "$line" | cut -f2)"
@@ -189,7 +189,7 @@ cmd_download() {
   [ -n "$filename" ] || die "no Filename for ${arch} v${ver}"
   [ -n "$sha" ] || die "no SHA256 for ${arch} v${ver}"
 
-  local deb="${out}/$(basename "$filename")"
+  deb="${out}/$(basename "${filename}")"
   log "[download] ${arch} v${ver} -> ${deb}"
   fetch "${APT_BASE}/${filename}" "$deb"
 

@@ -990,7 +990,8 @@ _diagnose() {
     # Don't run the binary — it IS the Claude app and launching it spawns
     # a new instance. Read the bundled version file instead.
     if [[ -n ${_electron_real:-} ]]; then
-        local _vfile="$(dirname "$_electron_real")/version"
+        local _vfile
+        _vfile="$(dirname "${_electron_real}")/version"
         if [[ -r $_vfile ]]; then
             echo "electron version file = $(<"$_vfile")"
         else

@@ -36,10 +36,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
 PATCHES_DIR="${PROJECT_DIR}/patches"
 
+# Every mktemp dir registers here so no build path can leak one.
+TMPDIRS=()
+cleanup_tmpdirs() {
+	if [[ ${#TMPDIRS[@]} -gt 0 ]]; then
+		rm -rf "${TMPDIRS[@]}"
+	fi
+}
+trap cleanup_tmpdirs EXIT
+
 # If patches dir is read-only (e.g. CI bind-mount), copy to a writable location
 # so Nim can write .nimcache and compiled binaries alongside the sources.
 if [[ -d "${PATCHES_DIR}" ]] && ! touch "${PATCHES_DIR}/.write-test" 2>/dev/null; then
-	WRITABLE_PATCHES="$(mktemp -d)/patches"
+	WRITABLE_ROOT="$(mktemp -d)"
+	TMPDIRS+=("${WRITABLE_ROOT}")
+	WRITABLE_PATCHES="${WRITABLE_ROOT}/patches"
 	cp -r "${PATCHES_DIR}" "${WRITABLE_PATCHES}"
 	# Also copy js/ dir (Nim patches embed snippets via staticRead with ../js/ paths)
 	[[ -d "${PROJECT_DIR}/js" ]] && cp -r "${PROJECT_DIR}/js" "$(dirname "${WRITABLE_PATCHES}")/js"
@@ -194,26 +205,40 @@ PY
 		log_info "Verifying signed Release (gpg)..."
 		curl -fsSL "${DISTS_DIR}/Release" -o "${WORK_DIR}/Release"
 		curl -fsSL "${DISTS_DIR}/Release.gpg" -o "${WORK_DIR}/Release.gpg"
-		# Verify the SHA256 in our trusted index file appears in the signed Release,
-		# so the Packages we parsed is the one Release vouches for. Then gpgv the sig.
-		PKG_SHA="$(sha256sum "${PKGFILE}" | cut -d' ' -f1)"
-		if ! grep -qiE "^[[:space:]]*${PKG_SHA}[[:space:]]" "${WORK_DIR}/Release"; then
-			log_error "Packages SHA256 (${PKG_SHA}) not present in the signed Release — chain broken"
-			exit 1
-		fi
+
 		# Dearmor the ASCII key into a binary keyring, then gpgv the detached sig
 		# against it (the standard apt-secure pattern — no trust DB, no keyserver).
 		TMP_GNUPG="$(mktemp -d)"
+		TMPDIRS+=("${TMP_GNUPG}")
 		KEYRING="${WORK_DIR}/claude-desktop.gpg"
 		gpg --homedir "${TMP_GNUPG}" --batch --yes --dearmor -o "${KEYRING}" "${GPG_KEY}" 2>/dev/null
 		if ! gpgv --keyring "${KEYRING}" "${WORK_DIR}/Release.gpg" "${WORK_DIR}/Release" 2>"${WORK_DIR}/gpgv.log"; then
 			cat "${WORK_DIR}/gpgv.log" >&2
-			rm -rf "${TMP_GNUPG}"
 			log_error "Release signature verification FAILED"
 			exit 1
 		fi
-		rm -rf "${TMP_GNUPG}"
-		log_info "Release signature OK; Packages index chains to it"
+
+		# Read the hash out of the now-verified Release, restricted to the SHA256
+		# block and to the Packages path we actually fetched. Matching the hash
+		# anywhere in the file would also accept the entry for another
+		# architecture's index. Mirrors .github/scripts/apt-fetch-verify.sh.
+		PKG_REL="${DEB_SOURCE#"${DISTS_DIR}/"}"
+		PKG_SHA="$(sha256sum "${PKGFILE}" | cut -d' ' -f1)"
+		CLAIMED_SHA="$(awk -v rel="${PKG_REL}" '
+			/^[A-Za-z0-9-]+:$/ { in_sha = ($0 == "SHA256:"); next }
+			in_sha && $3 == rel { print $1; exit }
+		' "${WORK_DIR}/Release")"
+		if [[ -z "${CLAIMED_SHA}" ]]; then
+			log_error "signed Release lists no SHA256 for ${PKG_REL} — chain broken"
+			exit 1
+		fi
+		if [[ "${CLAIMED_SHA}" != "${PKG_SHA}" ]]; then
+			log_error "Packages SHA256 mismatch for ${PKG_REL}"
+			log_error "  Release: ${CLAIMED_SHA}"
+			log_error "  fetched: ${PKG_SHA}"
+			exit 1
+		fi
+		log_info "Release signature OK; ${PKG_REL} matches its signed entry"
 	else
 		log_warn "GPG verification disabled (CLAUDE_GPG_VERIFY=0) — trusting HTTPS only"
 	fi
@@ -602,8 +627,50 @@ case "${DEB_ARCH}" in
 	*) TARBALL_FILE="${OUTPUT_DIR}/claude-desktop-${VERSION}-linux-${DEB_ARCH}.tar.gz" ;;
 esac
 log_info "Creating tarball: ${TARBALL_FILE}"
-GZIP_PROG=$(command -v pigz || echo gzip)
-(cd "${TARBALL_DIR}" && tar -I "${GZIP_PROG}" -cf "${TARBALL_FILE}" claude-desktop/ icons/ launcher/ copyright)
+
+# SOURCE_DATE_EPOCH pins every mtime tar records. When unset, derive it from the
+# newest file mtime in the upstream tree — Anthropic stamps those into the .deb,
+# so it is constant for a given input .deb. Restricted to -type f: tar leaves the
+# mtime of the directory it extracts INTO at creation time, so counting
+# directories reads back the build clock. The `|| true` keeps a failed pipeline
+# from aborting the assignment under `set -e`, so the fallback stays reachable.
+if [[ -z "${SOURCE_DATE_EPOCH:-}" ]]; then
+	SOURCE_DATE_EPOCH="$(find "${DATA_DIR}" -type f -printf '%T@\n' 2>/dev/null | cut -d. -f1 | sort -n | tail -1 || true)"
+	[[ "${SOURCE_DATE_EPOCH}" =~ ^[0-9]+$ ]] || SOURCE_DATE_EPOCH=0
+fi
+export SOURCE_DATE_EPOCH
+log_info "SOURCE_DATE_EPOCH: ${SOURCE_DATE_EPOCH}"
+
+# pigz and gzip emit different byte streams for identical input, so the
+# compressor is pinned. CLAUDE_ALLOW_PIGZ=1 trades byte-identical output for
+# speed on local builds.
+if [[ "${CLAUDE_ALLOW_PIGZ:-0}" == "1" ]] && command -v pigz &>/dev/null; then
+	GZIP_PROG="pigz"
+	log_warn "Using pigz (CLAUDE_ALLOW_PIGZ=1) — output is NOT byte-reproducible"
+else
+	GZIP_PROG="gzip"
+fi
+
+# --sort=name fixes entry order, which otherwise follows readdir and varies by
+# filesystem. --mtime and the ownership flags strip the build environment.
+# gzip -n omits the source filename and timestamp from the gzip header.
+TAR_FILE="${TARBALL_FILE%.gz}"
+(cd "${TARBALL_DIR}" && tar \
+	--sort=name \
+	--format=gnu \
+	--owner=0 --group=0 --numeric-owner \
+	--mtime="@${SOURCE_DATE_EPOCH}" \
+	-cf "${TAR_FILE}" claude-desktop/ icons/ launcher/ copyright)
+
+# Hash the uncompressed layer too: when this matches across two builds but the
+# .gz does not, the divergence is in the compressor rather than the tree.
+TAR_SHA256="$(sha256sum "${TAR_FILE}" | cut -d' ' -f1)"
+
+# Compress to a temporary name and rename on success, so a failure never leaves
+# a truncated archive at the path every packager reads by glob.
+"${GZIP_PROG}" -n -9 -c "${TAR_FILE}" >"${TARBALL_FILE}.partial"
+mv "${TARBALL_FILE}.partial" "${TARBALL_FILE}"
+rm -f "${TAR_FILE}"
 
 # Calculate SHA256
 SHA256=$(sha256sum "${TARBALL_FILE}" | cut -d' ' -f1)
@@ -619,12 +686,16 @@ echo "  Arch:     ${DEB_ARCH}"
 echo "  Electron: ${ELECTRON_VERSION:-unknown}"
 echo "  Tarball:  ${TARBALL_FILE}"
 echo "  SHA256:   ${SHA256}"
+echo "  TAR SHA:  ${TAR_SHA256}"
+echo "  EPOCH:    ${SOURCE_DATE_EPOCH}"
 
 # Write metadata file for CI / orchestrators
 cat >"${OUTPUT_DIR}/build-info.txt" <<EOF
 VERSION="${VERSION}"
 TARBALL="${TARBALL_FILE}"
 SHA256="${SHA256}"
+TAR_SHA256="${TAR_SHA256}"
+SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH}"
 ARCH="${DEB_ARCH}"
 DEB_VERSION="${VERSION}"
 ELECTRON_VERSION="${ELECTRON_VERSION:-unknown}"

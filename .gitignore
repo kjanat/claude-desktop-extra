@@ -9,6 +9,7 @@ Claude-Setup-x64.exe
 *.exe
 *.vhdx
 claude-desktop-linux-flake/
+/claude-desktop*.tar.gz
 
 # Temp files
 *.log
