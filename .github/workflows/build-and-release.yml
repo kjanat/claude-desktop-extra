@@ -4,27 +4,27 @@ on:
   pull_request:
     branches: [master]
     paths-ignore:
-      - '*.md'
-      - 'docs/**'
-      - 'LICENSE'
-      - '.gitignore'
-  workflow_dispatch:  # Release trigger (dispatched automatically by version-check.yml on a new upstream version, or manually)
+      - "*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".gitignore"
+  workflow_dispatch: # Release trigger (dispatched automatically by version-check.yml on a new upstream version, or manually)
     inputs:
       force_rebuild:
-        description: 'Force rebuild & release even if upstream version unchanged (bumps pkgrel for patch/feature updates)'
+        description: "Force rebuild & release even if upstream version unchanged (bumps pkgrel for patch/feature updates)"
         required: false
         type: boolean
         default: false
       auto_pr:
-        description: 'Auto-PR mode: build the official .deb, then open a PR bumping .upstream-version + Nix hash instead of publishing a release (manual conservative alternative; the auto-release path dispatched by version-check.yml does NOT set this).'
+        description: "Auto-PR mode: build the official .deb, then open a PR bumping .upstream-version + Nix hash instead of publishing a release (manual conservative alternative; the auto-release path dispatched by version-check.yml does NOT set this)."
         required: false
         type: boolean
         default: false
       deb_version:
-        description: 'Pin a specific upstream .deb version to ingest (e.g. 1.17377.0). Empty = highest available in the apt repo.'
+        description: "Pin a specific upstream .deb version to ingest (e.g. 1.17377.0). Empty = highest available in the apt repo."
         required: false
         type: string
-        default: ''
+        default: ""
 
 # Serialize release runs: all workflow_dispatch runs share ONE group with
 # cancel-in-progress off, so a second dispatch (e.g. version-check auto-release
@@ -94,7 +94,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
-          fetch-depth: 0  # Full history for git changelog generation
+          fetch-depth: 0 # Full history for git changelog generation
 
       # ----------------------------------------------------------------
       # Query Anthropic's official Linux .deb apt repo, GPG-verify the signed
@@ -1863,7 +1863,18 @@ jobs:
   # Job 4: Release & Publish (fan-in — waits for ALL parallel jobs)
   # ================================================================
   release:
-    needs: [check-version, build-tarball, build-aarch64-tarball, lint-scripts, package-appimage, package-deb, package-rpm, test-nix, generate-pkgbuild, test-pkgbuild]
+    needs: [
+      check-version,
+      build-tarball,
+      build-aarch64-tarball,
+      lint-scripts,
+      package-appimage,
+      package-deb,
+      package-rpm,
+      test-nix,
+      generate-pkgbuild,
+      test-pkgbuild,
+    ]
     # Publish only on a real release dispatch — NOT in auto_pr mode (auto_pr
     # builds + validates everything, then opens a PR via open-version-pr; the
     # human merge + a follow-up plain workflow_dispatch run does the release).
@@ -1879,16 +1890,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      # ── AUR preflight ───────────────────────────────────────────────
-      # The AUR push at the end of this job is the only step that depends
-      # on an external service that can be down (e.g. "The AUR is down due
-      # to maintenance", run 30741060085). Probe it BEFORE anything is
-      # published: failing here stops the release while every channel
-      # (GitHub Release + pacman repo assets, Pages apt/dnf repos, AUR,
-      # README versions) is still consistently on the previous version.
-      # A failure mid-job instead leaves them half-deployed, because the
-      # failed job skips deploy-rpm-repo -> deploy-pages.
+      # ── AUR preflight (canonical repo only) ─────────────────────────
+      # Forks only publish to channels they own (GitHub Release / optional
+      # signed repos + Pages). AUR + legacy mirrors stay on upstream.
+      # On the canonical repo, probe AUR BEFORE anything is published so a
+      # down AUR (run 30741060085) does not half-deploy GH/Pages/pacman.
       - name: Setup SSH for AUR
+        if: ${{ !github.event.repository.fork }}
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.AUR_SSH_KEY }}" > ~/.ssh/aur
@@ -1903,6 +1911,7 @@ jobs:
             >> ~/.ssh/config
 
       - name: Preflight - AUR reachable
+        if: ${{ !github.event.repository.fork }}
         run: |
           for i in 1 2 3; do
             if git ls-remote ssh://aur@aur.archlinux.org/claude-desktop-extra.git HEAD; then
@@ -2157,7 +2166,7 @@ jobs:
 
             **Arch Linux (pacman Repository - recommended)**
             ```bash
-            curl -fsSL https://patrickjaja.github.io/claude-desktop-extra/install-pacman.sh | sudo bash
+            curl -fsSL "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/install-pacman.sh" | sudo bash
             sudo pacman -Syu claude-desktop-extra
             ```
             ${{ steps.pacman.outputs.repo_available != 'true' && '> **NOTE:** this release ships NO signed pacman database (no signing key was available to the build), so the repository above will not serve it. Use the manual `pacman -U` command below instead.' || '' }}
@@ -2172,7 +2181,7 @@ jobs:
 
             **Debian/Ubuntu (APT Repository — recommended)**
             ```bash
-            curl -fsSL https://patrickjaja.github.io/claude-desktop-extra/install.sh | sudo bash
+            curl -fsSL "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/install.sh" | sudo bash
             sudo apt install claude-desktop-extra
             ```
 
@@ -2186,7 +2195,7 @@ jobs:
 
             **Fedora/RHEL (RPM Repository — recommended)**
             ```bash
-            curl -fsSL https://patrickjaja.github.io/claude-desktop-extra/install-rpm.sh | sudo bash
+            curl -fsSL "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/install-rpm.sh" | sudo bash
             sudo dnf install claude-desktop-extra
             ```
 
@@ -2200,7 +2209,7 @@ jobs:
 
             **NixOS / Nix**
             ```bash
-            nix run github:patrickjaja/claude-desktop-extra
+            nix run github:${{ github.repository }}
             ```
 
             **AppImage (Any Distro)**
@@ -2221,18 +2230,18 @@ jobs:
             > ```
 
             ### Checksums
-            | File | SHA256 |
-            |------|--------|
-            | Arch pacman (x86_64) | `${{ steps.files.outputs.pkg_x86_64_sha256 }}` |
-            | Arch pacman (aarch64) | `${{ steps.files.outputs.pkg_aarch64_sha256 }}` |
-            | Tarball (x86_64) | `${{ steps.files.outputs.tarball_sha256 }}` |
-            | Tarball (aarch64) | `${{ steps.files.outputs.tarball_aarch64_sha256 }}` |
-            | AppImage (x86_64) | `${{ steps.files.outputs.appimage_x86_64_sha256 }}` |
-            | AppImage (aarch64) | `${{ steps.files.outputs.appimage_aarch64_sha256 }}` |
-            | Debian (amd64) | `${{ steps.files.outputs.deb_amd64_sha256 }}` |
-            | Debian (arm64) | `${{ steps.files.outputs.deb_arm64_sha256 }}` |
-            | RPM (x86_64) | `${{ steps.files.outputs.rpm_x86_64_sha256 }}` |
-            | RPM (aarch64) | `${{ steps.files.outputs.rpm_aarch64_sha256 }}` |
+            | File                  | SHA256                                               |
+            | --------------------- | ---------------------------------------------------- |
+            | Arch pacman (x86_64)  | `${{ steps.files.outputs.pkg_x86_64_sha256 }}`       |
+            | Arch pacman (aarch64) | `${{ steps.files.outputs.pkg_aarch64_sha256 }}`      |
+            | Tarball (x86_64)      | `${{ steps.files.outputs.tarball_sha256 }}`          |
+            | Tarball (aarch64)     | `${{ steps.files.outputs.tarball_aarch64_sha256 }}`  |
+            | AppImage (x86_64)     | `${{ steps.files.outputs.appimage_x86_64_sha256 }}`  |
+            | AppImage (aarch64)    | `${{ steps.files.outputs.appimage_aarch64_sha256 }}` |
+            | Debian (amd64)        | `${{ steps.files.outputs.deb_amd64_sha256 }}`        |
+            | Debian (arm64)        | `${{ steps.files.outputs.deb_arm64_sha256 }}`        |
+            | RPM (x86_64)          | `${{ steps.files.outputs.rpm_x86_64_sha256 }}`       |
+            | RPM (aarch64)         | `${{ steps.files.outputs.rpm_aarch64_sha256 }}`      |
 
             ### Changes since last release
             ${{ needs.check-version.outputs.changelog }}
@@ -2254,6 +2263,7 @@ jobs:
       # continue-on-error: a mirror hiccup must never block the main repo's
       # APT deploy / README commit steps that follow in this job.
       - name: Mirror release to legacy claude-desktop-bin repo
+        if: ${{ !github.event.repository.fork }}
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.LEGACY_MIRROR_TOKEN }}
@@ -2534,15 +2544,11 @@ jobs:
             git push origin master
           }
 
-      # ── AUR publish ─────────────────────────────────────────────────
-      # Pushes the release's PKGBUILD to the claude-desktop-extra AUR
-      # package (fresh AUR repo created by the first push - the old
-      # claude-desktop-bin AUR package was deleted and must never be
-      # re-created). Runs last in the job; the AUR-reachable preflight at
-      # the top of the job already failed fast if the AUR is down, and the
-      # retries below ride out short blips in the window since then. SSH
-      # config was written by "Setup SSH for AUR" at the top of the job.
+      # ── AUR publish (canonical repo only) ───────────────────────────
+      # Forks skip this. On upstream: preflight already failed fast if
+      # AUR is down; retries below ride out short blips.
       - name: Push to AUR
+        if: ${{ !github.event.repository.fork }}
         env:
           AUR_USERNAME: ${{ secrets.AUR_USERNAME }}
           AUR_EMAIL: ${{ secrets.AUR_EMAIL }}
@@ -2700,6 +2706,7 @@ jobs:
   # ================================================================
   trigger-legacy-pages-mirror:
     needs: [deploy-pages]
+    if: ${{ !github.event.repository.fork }}
     runs-on: ubuntu-latest
     steps:
       - name: Dispatch mirror-pages in claude-desktop-bin
@@ -2749,7 +2756,18 @@ jobs:
   # a release directly from the auto path.
   # ================================================================
   open-version-pr:
-    needs: [check-version, build-tarball, build-aarch64-tarball, lint-scripts, package-appimage, package-deb, package-rpm, test-nix, generate-pkgbuild, test-pkgbuild]
+    needs: [
+      check-version,
+      build-tarball,
+      build-aarch64-tarball,
+      lint-scripts,
+      package-appimage,
+      package-deb,
+      package-rpm,
+      test-nix,
+      generate-pkgbuild,
+      test-pkgbuild,
+    ]
     if: needs.check-version.outputs.should_build == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.auto_pr == 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -2862,7 +2880,21 @@ jobs:
           done
 
   notify-version-issue-failure:
-    needs: [check-version, build-tarball, build-aarch64-tarball, lint-scripts, package-appimage, package-deb, package-rpm, test-nix, generate-pkgbuild, test-pkgbuild, release, deploy-rpm-repo, deploy-pages]
+    needs: [
+      check-version,
+      build-tarball,
+      build-aarch64-tarball,
+      lint-scripts,
+      package-appimage,
+      package-deb,
+      package-rpm,
+      test-nix,
+      generate-pkgbuild,
+      test-pkgbuild,
+      release,
+      deploy-rpm-repo,
+      deploy-pages,
+    ]
     if: failure() && github.event_name == 'workflow_dispatch' && github.event.inputs.auto_pr != 'true'
     runs-on: ubuntu-latest
     permissions:
@@ -2871,15 +2903,15 @@ jobs:
       - name: Comment on matching new-version issue
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.check-version.outputs.version || github.event.inputs.deb_version }}
-          REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           if [ -z "$VERSION" ]; then
             echo "No version resolved - skipping issue comment."
             exit 0
           fi
-          NUMBERS=$(gh issue list --repo "$REPO" --label "new-version" --state open \
+          NUMBERS=$(gh issue list --label "new-version" --state open \
             --search "New Claude Desktop v${VERSION}" --json number --jq '.[].number')
           if [ -z "$NUMBERS" ]; then
             echo "No open new-version issue for v${VERSION} - nothing to comment on."
@@ -2893,6 +2925,6 @@ jobs:
             echo "The 2-hourly version check will NOT retry while this issue stays open; a successful release run closes it automatically."
           } > /tmp/failure-comment.md
           for N in $NUMBERS; do
-            gh issue comment "$N" --repo "$REPO" --body-file /tmp/failure-comment.md
+            gh issue comment "$N" --body-file /tmp/failure-comment.md
             echo "Commented on issue #${N}"
           done
