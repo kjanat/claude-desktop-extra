@@ -327,7 +327,7 @@ jobs:
           ~~~sh
           export GH_REPO="${GH_REPO}"
           gh release download "${RELEASE}" --clobber
-          gh attestation verify ${TARBALL[0]}
+          gh attestation verify "${TARBALL[0]}"
           ~~~
           EOF
 
