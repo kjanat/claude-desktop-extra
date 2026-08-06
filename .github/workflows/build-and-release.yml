@@ -155,9 +155,14 @@ jobs:
           releases = json.load(sys.stdin)
           versions = []
           for r in releases:
+              if r.get('prerelease') or r.get('draft'):
+                  continue
               tag = r['tag_name'].lstrip('v')
-              base = tag.split('-')[0] if '-' in tag else tag
-              parts = [int(x) for x in base.split('.')]
+              base = tag.split('-')[0]
+              try:
+                  parts = [int(x) for x in base.split('.')]
+              except ValueError:
+                  continue
               versions.append((parts, base))
           if versions:
               versions.sort(key=lambda x: x[0], reverse=True)
@@ -167,8 +172,10 @@ jobs:
           ")
 
           if [ -z "$HIGHEST_VERSION" ]; then
-            echo "::error::No releases found — cannot determine highest version"
-            exit 1
+            echo "No published release yet — treating ${CURRENT_VERSION} as new"
+            echo "highest_version=" >> $GITHUB_OUTPUT
+            echo "needs_update=true" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
           echo "Highest released version: ${HIGHEST_VERSION}"
