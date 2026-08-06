@@ -148,11 +148,23 @@ jobs:
           CURRENT_VERSION: ${{ steps.version.outputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          RELEASES_JSON=$(gh release list -R "$GITHUB_REPOSITORY" --limit 20 \
-            --json tagName,isPrerelease,isDraft) || {
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          NAME="${GITHUB_REPOSITORY#*/}"
+          RELEASE_STATE=$(gh api graphql \
+            -f owner="$OWNER" \
+            -f name="$NAME" \
+            -f query='query($owner: String!, $name: String!) {
+              repository(owner: $owner, name: $name) {
+                releases(first: 100, orderBy: {field: CREATED_AT, direction: DESC}) {
+                  nodes { tagName isPrerelease isDraft }
+                }
+              }
+            }') || {
             echo "::error::Failed to fetch releases from GitHub API (rate limit or auth issue)"
             exit 1
           }
+          RELEASES_JSON=$(jq -c '.data.repository.releases.nodes' <<< "$RELEASE_STATE")
+          printf 'RELEASES_JSON=%s\n' "$RELEASES_JSON" >> "$GITHUB_ENV"
 
           HIGHEST_VERSION=$(echo "$RELEASES_JSON" | python3 -c "
           import sys, json
@@ -202,12 +214,11 @@ jobs:
           FORCE: ${{ github.event.inputs.force_rebuild }}
           NEEDS_UPDATE: ${{ steps.check.outputs.needs_update }}
           HIGHEST_VERSION: ${{ steps.check.outputs.highest_version }}
-          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "$FORCE" == "true" ] && [ "$NEEDS_UPDATE" != "true" ]; then
-            RELEASE_COUNT=$(gh release list -R "$GITHUB_REPOSITORY" --limit 100 \
-              --json tagName \
-              --jq "[.[] | select(.tagName | test(\"^v${VERSION}(-[0-9]+)?$\"))] | length")
+            RELEASE_COUNT=$(jq \
+              "[.[] | select(.tagName | test(\"^v${VERSION}(-[0-9]+)?$\"))] | length" \
+              <<< "$RELEASES_JSON")
             PKGREL=$((RELEASE_COUNT + 1))
           else
             PKGREL=1
@@ -215,6 +226,8 @@ jobs:
 
           # Pick a free tag. Probe releases, partial re-runs, and concurrent
           # dispatch can already own v${VERSION} or v${VERSION}-N.
+          REMOTE_TAGS="${RUNNER_TEMP}/github-remote-tags"
+          git ls-remote --tags origin > "$REMOTE_TAGS"
           while true; do
             if [ "$PKGREL" -gt 1 ]; then
               TAG="v${VERSION}-${PKGREL}"
@@ -223,24 +236,10 @@ jobs:
               TAG="v${VERSION}"
               RELEASE_NAME="Claude Desktop ${VERSION}"
             fi
-            RELEASE_EXISTS=false
-            if gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json tagName >/dev/null 2>&1; then
-              RELEASE_EXISTS=true
-            elif ! gh release list -R "$GITHUB_REPOSITORY" --limit 1 >/dev/null; then
-              echo "::error::Could not query GitHub releases"
-              exit 1
-            fi
-
-            TAG_EXISTS=false
-            if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null; then
-              TAG_EXISTS=true
-            else
-              STATUS=$?
-              if [ "$STATUS" -ne 2 ]; then
-                echo "::error::Could not query Git tag ${TAG} (git ls-remote exit ${STATUS})"
-                exit 1
-              fi
-            fi
+            RELEASE_EXISTS=$(jq --arg tag "$TAG" 'any(.[]; .tagName == $tag)' <<< "$RELEASES_JSON")
+            TAG_EXISTS=$(awk -v ref="refs/tags/${TAG}" \
+              '$2 == ref { found = 1 } END { print found ? "true" : "false" }' \
+              "$REMOTE_TAGS")
 
             if [ "$RELEASE_EXISTS" = "false" ] && [ "$TAG_EXISTS" = "false" ]; then
               break
@@ -2174,27 +2173,26 @@ jobs:
           TAG: ${{ needs.check-version.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          RELEASE_EXISTS=false
-          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json tagName >/dev/null 2>&1; then
-            RELEASE_EXISTS=true
-          elif ! gh release list -R "$GITHUB_REPOSITORY" --limit 1 >/dev/null; then
-            echo "::error::Could not query GitHub releases"
+          OWNER="${GITHUB_REPOSITORY%%/*}"
+          NAME="${GITHUB_REPOSITORY#*/}"
+          OCCUPIED=$(gh api graphql \
+            -f owner="$OWNER" \
+            -f name="$NAME" \
+            -f tag="$TAG" \
+            -f ref="refs/tags/${TAG}" \
+            -f query='query($owner: String!, $name: String!, $tag: String!, $ref: String!) {
+              repository(owner: $owner, name: $name) {
+                release(tagName: $tag) { tagName }
+                ref(qualifiedName: $ref) { name }
+              }
+            }' \
+            --jq '[.data.repository.release, .data.repository.ref] | any')
+          if [ "$OCCUPIED" = "true" ]; then
+            echo "::error::Release ${TAG} was claimed after artifacts were built; rerun to rebuild with the next pkgrel"
             exit 1
           fi
-
-          TAG_EXISTS=false
-          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null; then
-            TAG_EXISTS=true
-          else
-            STATUS=$?
-            if [ "$STATUS" -ne 2 ]; then
-              echo "::error::Could not query Git tag ${TAG} (git ls-remote exit ${STATUS})"
-              exit 1
-            fi
-          fi
-
-          if [ "$RELEASE_EXISTS" = "true" ] || [ "$TAG_EXISTS" = "true" ]; then
-            echo "::error::Release ${TAG} was claimed after artifacts were built; rerun to rebuild with the next pkgrel"
+          if [ "$OCCUPIED" != "false" ]; then
+            echo "::error::Unexpected occupancy result for ${TAG}: ${OCCUPIED}"
             exit 1
           fi
           echo "Confirmed free tag ${TAG}"
