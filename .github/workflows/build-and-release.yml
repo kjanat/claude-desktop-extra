@@ -38,6 +38,8 @@ concurrency:
 permissions:
   contents: read
 
+env: { REPO: "${{ github.repository }} " } # In case I missed any
+
 # ──────────────────────────────────────────────────────────────────────
 # Job graph (fan-out / fan-in):
 #
@@ -144,11 +146,9 @@ jobs:
 
       - name: Check if version changed
         id: check
-        env:
-          CURRENT_VERSION: ${{ steps.version.outputs.version }}
-          REPO: ${{ github.repository }}
+        env: { CURRENT_VERSION: "${{ steps.version.outputs.version }}" }
         run: |
-          RELEASES_JSON=$(curl -sf "https://api.github.com/repos/${REPO}/releases?per_page=20") || {
+          RELEASES_JSON=$(curl -sf "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases?per_page=20") || {
             echo "::error::Failed to fetch releases from GitHub API (rate limit or auth issue)"
             exit 1
           }
@@ -201,23 +201,41 @@ jobs:
           FORCE: ${{ github.event.inputs.force_rebuild }}
           NEEDS_UPDATE: ${{ steps.check.outputs.needs_update }}
           HIGHEST_VERSION: ${{ steps.check.outputs.highest_version }}
-          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "$FORCE" == "true" ] && [ "$NEEDS_UPDATE" != "true" ]; then
-            RELEASE_COUNT=$(curl -s "https://api.github.com/repos/${REPO}/releases?per_page=100" \
+            RELEASE_COUNT=$(curl -sS -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
               | jq "[.[] | select(.tag_name | test(\"^v${VERSION}(-[0-9]+)?$\"))] | length")
             PKGREL=$((RELEASE_COUNT + 1))
           else
             PKGREL=1
           fi
 
-          if [ "$PKGREL" -gt 1 ]; then
-            TAG="v${VERSION}-${PKGREL}"
-            RELEASE_NAME="Claude Desktop ${VERSION} (patch release ${PKGREL})"
-          else
-            TAG="v${VERSION}"
-            RELEASE_NAME="Claude Desktop ${VERSION}"
-          fi
+          # Pick a free tag. Probe releases, partial re-runs, and concurrent
+          # dispatch can already own v${VERSION} or v${VERSION}-N.
+          while true; do
+            if [ "$PKGREL" -gt 1 ]; then
+              TAG="v${VERSION}-${PKGREL}"
+              RELEASE_NAME="Claude Desktop ${VERSION} (patch release ${PKGREL})"
+            else
+              TAG="v${VERSION}"
+              RELEASE_NAME="Claude Desktop ${VERSION}"
+            fi
+            HTTP=$(curl -sS -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" || true)
+            if [ "$HTTP" = "404" ]; then
+              break
+            fi
+            if [ "$HTTP" != "200" ]; then
+              echo "::error::Could not check whether release ${TAG} exists (HTTP ${HTTP})"
+              exit 1
+            fi
+            echo "Release ${TAG} already exists — bumping pkgrel"
+            PKGREL=$((PKGREL + 1))
+          done
 
           if [ "$VERSION" = "$HIGHEST_VERSION" ] || [ "$NEEDS_UPDATE" = "true" ]; then
             MAKE_LATEST="true"
@@ -226,17 +244,16 @@ jobs:
             echo "::warning::Building v${VERSION} but v${HIGHEST_VERSION} is higher — will NOT mark as Latest"
           fi
 
-          echo "pkgrel=${PKGREL}" >> $GITHUB_OUTPUT
-          echo "tag=${TAG}" >> $GITHUB_OUTPUT
-          echo "release_name=${RELEASE_NAME}" >> $GITHUB_OUTPUT
-          echo "make_latest=${MAKE_LATEST}" >> $GITHUB_OUTPUT
+          echo "pkgrel=${PKGREL}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "make_latest=${MAKE_LATEST}" >> "$GITHUB_OUTPUT"
           echo "Package release: pkgrel=${PKGREL}, Tag: ${TAG}, Latest: ${MAKE_LATEST}"
 
       - name: Extract changelog for this release
         id: git_changelog
         if: steps.check.outputs.needs_update == 'true' || github.event_name == 'workflow_dispatch'
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
+        env: { VERSION: "${{ steps.version.outputs.version }}" }
         run: |
           CHANGELOG_URL="https://github.com/${GITHUB_REPOSITORY}/blob/master/CHANGELOG.md"
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
@@ -1534,10 +1551,9 @@ jobs:
           PKGREL: ${{ needs.check-version.outputs.pkgrel }}
           TARBALL_SHA256: ${{ needs.build-tarball.outputs.tarball_sha256 }}
           SHA256SUM_AARCH64: ${{ needs.build-aarch64-tarball.outputs.tarball_aarch64_sha256 }}
-          REPO: ${{ github.repository }}
         run: |
-          PREBUILT_URL="https://github.com/${REPO}/releases/download/${TAG}/claude-desktop-${VERSION}-linux.tar.gz"
-          export DOWNLOAD_URL_AARCH64="https://github.com/${REPO}/releases/download/${TAG}/claude-desktop-${VERSION}-linux-aarch64.tar.gz"
+          PREBUILT_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/claude-desktop-${VERSION}-linux.tar.gz"
+          export DOWNLOAD_URL_AARCH64="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/claude-desktop-${VERSION}-linux-aarch64.tar.gz"
           bash ./scripts/generate-pkgbuild.sh "${VERSION}" "${TARBALL_SHA256}" "$PREBUILT_URL" "${PKGREL}" > PKGBUILD
           cat PKGBUILD
 
@@ -1882,6 +1898,9 @@ jobs:
     # skip transitively when this is skipped.
     if: needs.check-version.outputs.should_build == 'true' && github.event_name == 'workflow_dispatch' && github.event.inputs.auto_pr != 'true'
     runs-on: ubuntu-latest
+    outputs:
+      pages_ready: ${{ steps.pages.outputs.pages_ready }}
+      tag: ${{ steps.freetag.outputs.tag }}
     permissions:
       contents: write
     steps:
@@ -2010,8 +2029,7 @@ jobs:
       # ----------------------------------------------------------------
       - name: Build signed pacman repository
         id: pacman
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+        env: { GPG_PRIVATE_KEY: "${{ secrets.APT_GPG_PRIVATE_KEY }}" }
         run: |
           mkdir -p pacman-repo pacman-in
           cp artifacts/arch-package-x86_64/claude-desktop-extra-*-x86_64.pkg.tar.zst pacman-in/
@@ -2133,10 +2151,57 @@ jobs:
           echo "=== pacman repository assets ==="
           ls -la pacman-repo/
 
+      # Re-check immediately before publish: a probe or concurrent run may have
+      # taken the tag while packages built (pkgrel inside filenames stays as
+      # built; only the GitHub release tag moves).
+      - name: Resolve free release tag
+        id: freetag
+        env:
+          VERSION: ${{ needs.check-version.outputs.version }}
+          PKGREL: ${{ needs.check-version.outputs.pkgrel }}
+          PLANNED_TAG: ${{ needs.check-version.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PKGREL="${PKGREL}"
+          while true; do
+            if [ "${PKGREL}" -gt 1 ]; then
+              TAG="v${VERSION}-${PKGREL}"
+              RELEASE_NAME="Claude Desktop ${VERSION} (patch release ${PKGREL})"
+            else
+              TAG="v${VERSION}"
+              RELEASE_NAME="Claude Desktop ${VERSION}"
+            fi
+            HTTP=$(curl -sS -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" || true)
+            if [ "${HTTP}" = "404" ]; then
+              break
+            fi
+            if [ "${HTTP}" != "200" ]; then
+              echo "::error::Could not check whether release ${TAG} exists (HTTP ${HTTP})"
+              exit 1
+            fi
+            echo "Release ${TAG} already exists — trying next tag suffix"
+            PKGREL=$((PKGREL + 1))
+          done
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+          echo "release_name=${RELEASE_NAME}" >> "${GITHUB_OUTPUT}"
+          echo "Using free tag ${TAG}"
+
+          # PKGBUILD / .SRCINFO were generated against check-version's tag.
+          # If the free tag moved, rewrite download URLs so the published
+          # assets match the release they ship on.
+          if [ "${TAG}" != "${PLANNED_TAG}" ]; then
+            echo "Rewriting PKGBUILD download URLs: ${PLANNED_TAG} -> ${TAG}"
+            sed -i "s|releases/download/${PLANNED_TAG}/|releases/download/${TAG}/|g" \
+              release-files/PKGBUILD release-files/default.SRCINFO
+          fi
+
       - name: Create GitHub Release
         env:
-          TAG: ${{ needs.check-version.outputs.tag }}
-          RELEASE_NAME: ${{ needs.check-version.outputs.release_name }}
+          TAG: ${{ steps.freetag.outputs.tag }}
+          RELEASE_NAME: ${{ steps.freetag.outputs.release_name }}
           VERSION: ${{ needs.check-version.outputs.version }}
           PKGREL: ${{ needs.check-version.outputs.pkgrel }}
           CHANGELOG: ${{ needs.check-version.outputs.changelog }}
@@ -2148,17 +2213,15 @@ jobs:
           DEB_ARM_SHA: ${{ steps.files.outputs.deb_arm64_sha256 }}
           RPM_X86_SHA: ${{ steps.files.outputs.rpm_x86_64_sha256 }}
           RPM_ARM_SHA: ${{ steps.files.outputs.rpm_aarch64_sha256 }}
-          REPO: ${{ github.repository }}
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ needs.check-version.outputs.tag }}
-          name: ${{ needs.check-version.outputs.release_name }}
+          tag_name: ${{ steps.freetag.outputs.tag }}
+          name: ${{ steps.freetag.outputs.release_name }}
           # .SRCINFO is staged as default.SRCINFO (its GitHub asset name), so
           # the plain glob covers it and re-runs overwrite it cleanly.
-          files: |
-            release-files/*
+          files: release-files/*
           body: |
-            ## ${{ needs.check-version.outputs.release_name }}
+            ## ${{ steps.freetag.outputs.release_name }}
 
             This release provides Claude Desktop version ${{ needs.check-version.outputs.version }} pre-patched for Linux.
 
@@ -2174,9 +2237,9 @@ jobs:
             **Arch Linux (manual package)**
             ```bash
             # x86_64
-            sudo pacman -U https://github.com/${{ github.repository }}/releases/download/${{ needs.check-version.outputs.tag }}/claude-desktop-extra-${{ needs.check-version.outputs.version }}-${{ needs.check-version.outputs.pkgrel }}-x86_64.pkg.tar.zst
+            sudo pacman -U https://github.com/${{ github.repository }}/releases/download/${{ steps.freetag.outputs.tag }}/claude-desktop-extra-${{ needs.check-version.outputs.version }}-${{ needs.check-version.outputs.pkgrel }}-x86_64.pkg.tar.zst
             # ARM64
-            sudo pacman -U https://github.com/${{ github.repository }}/releases/download/${{ needs.check-version.outputs.tag }}/claude-desktop-extra-${{ needs.check-version.outputs.version }}-${{ needs.check-version.outputs.pkgrel }}-aarch64.pkg.tar.zst
+            sudo pacman -U https://github.com/${{ github.repository }}/releases/download/${{ steps.freetag.outputs.tag }}/claude-desktop-extra-${{ needs.check-version.outputs.version }}-${{ needs.check-version.outputs.pkgrel }}-aarch64.pkg.tar.zst
             ```
 
             **Debian/Ubuntu (APT Repository — recommended)**
@@ -2267,10 +2330,9 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.LEGACY_MIRROR_TOKEN }}
-          TAG: ${{ needs.check-version.outputs.tag }}
-          RELEASE_NAME: ${{ needs.check-version.outputs.release_name }}
+          TAG: ${{ steps.freetag.outputs.tag }}
+          RELEASE_NAME: ${{ steps.freetag.outputs.release_name }}
           MAKE_LATEST: ${{ needs.check-version.outputs.make_latest }}
-          REPO: ${{ github.repository }}
         run: |
           if [ -z "$GH_TOKEN" ]; then
             echo "LEGACY_MIRROR_TOKEN not set - legacy release mirror disabled, skipping"
@@ -2282,19 +2344,19 @@ jobs:
               --target main \
               --title "${RELEASE_NAME} (legacy mirror)" \
               --latest="${MAKE_LATEST:-true}" \
-              --notes "Legacy mirror of https://github.com/${REPO}/releases/tag/${TAG}. The project was renamed to claude-desktop-extra - see https://github.com/${REPO} for the release notes and migration guide. This mirror keeps pre-rename pacman/AppImage installs updating during the transition window."
+              --notes "Legacy mirror of https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}. The project was renamed to claude-desktop-extra - see https://github.com/${GITHUB_REPOSITORY} for the release notes and migration guide. This mirror keeps pre-rename pacman/AppImage installs updating during the transition window."
           fi
           gh release upload "$TAG" -R "$LEGACY_REPO" --clobber \
             release-files/*
           echo "Mirrored $(ls release-files | wc -l) assets to ${LEGACY_REPO}@${TAG}"
 
       - name: Deploy APT Repository and static files
+        id: pages
         env:
           GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ needs.check-version.outputs.version }}
           PKGREL: ${{ needs.check-version.outputs.pkgrel }}
-          REPO: ${{ github.repository }}
         run: |
           DEB_FILE_AMD64="$(pwd)/release-files/claude-desktop-extra_${VERSION}-${PKGREL}_amd64.deb"
           DEB_FILE_ARM64="$(pwd)/release-files/claude-desktop-extra_${VERSION}-${PKGREL}_arm64.deb"
@@ -2305,6 +2367,7 @@ jobs:
 
           if [ -z "$GPG_PRIVATE_KEY" ]; then
             echo "::warning::APT_GPG_PRIVATE_KEY secret not set — skipping repo deploy"
+            echo "pages_ready=false" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
 
@@ -2416,8 +2479,10 @@ jobs:
           # Do NOT push here — the deploy-rpm-repo job will add RPMs and do the
           # single push, avoiding two Pages deployments and CDN race conditions.
           tar -czf /tmp/gh-pages-content.tar.gz -C "$REPO_DIR" .
+          echo "pages_ready=true" >> "${GITHUB_OUTPUT}"
 
       - name: Upload gh-pages content
+        if: steps.pages.outputs.pages_ready == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: gh-pages-content
@@ -2426,12 +2491,11 @@ jobs:
 
       - name: Verify release tarball download
         env:
-          TAG: ${{ needs.check-version.outputs.tag }}
+          TAG: ${{ steps.freetag.outputs.tag }}
           VERSION: ${{ needs.check-version.outputs.version }}
           EXPECTED_SHA: ${{ needs.build-tarball.outputs.tarball_sha256 }}
-          REPO: ${{ github.repository }}
         run: |
-          URL="https://github.com/${REPO}/releases/download/${TAG}/claude-desktop-${VERSION}-linux.tar.gz"
+          URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/claude-desktop-${VERSION}-linux.tar.gz"
 
           echo "Verifying release tarball at: ${URL}"
           for i in 1 2 3 4 5; do
@@ -2462,15 +2526,14 @@ jobs:
         id: nix-hash
         env:
           VERSION: ${{ needs.check-version.outputs.version }}
-          TAG: ${{ needs.check-version.outputs.tag }}
-          REPO: ${{ github.repository }}
+          TAG: ${{ steps.freetag.outputs.tag }}
         run: |
           # package.nix fetches from this release's own tag (v${VERSION} for
           # pkgrel 1, v${VERSION}-N for re-releases). Published assets are
           # immutable - never re-uploaded or clobbered - so a pinned flake.lock
           # keeps working after later pkgrel releases (issue #214). Compute the
           # hash from the exact URL users will fetch.
-          NIX_URL="https://github.com/${REPO}/releases/download/${TAG}/claude-desktop-${VERSION}-linux.tar.gz"
+          NIX_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/claude-desktop-${VERSION}-linux.tar.gz"
 
           echo "Fetching tarball from Nix fetchurl URL: ${NIX_URL}"
           for i in 1 2 3 4 5; do
@@ -2554,7 +2617,7 @@ jobs:
           AUR_EMAIL: ${{ secrets.AUR_EMAIL }}
           VERSION: ${{ needs.check-version.outputs.version }}
           PKGREL: ${{ needs.check-version.outputs.pkgrel }}
-          TAG: ${{ needs.check-version.outputs.tag }}
+          TAG: ${{ steps.freetag.outputs.tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           git config --global user.name "$AUR_USERNAME"
@@ -2605,15 +2668,18 @@ jobs:
 
       - name: Cleanup
         if: always()
-        run: |
-          rm -rf release-files artifacts pacman-repo pacman-in /tmp/pacman-gpg aur-repo aur-src ~/.ssh/aur
+        run: rm -rf release-files artifacts pacman-repo pacman-in /tmp/pacman-gpg aur-repo aur-src ~/.ssh/aur
 
   # ================================================================
   # RPM Repository — runs on Fedora for native rpm-sign support
   # ================================================================
   deploy-rpm-repo:
     needs: [check-version, release]
-    if: needs.check-version.outputs.should_build == 'true' && github.event_name == 'workflow_dispatch'
+    # Only when release produced signed Pages content (needs APT_GPG_PRIVATE_KEY).
+    if: >-
+      needs.check-version.outputs.should_build == 'true'
+      && github.event_name == 'workflow_dispatch'
+      && needs.release.outputs.pages_ready == 'true'
     runs-on: ubuntu-latest
     container: fedora:40
     permissions:
@@ -2682,7 +2748,7 @@ jobs:
   # ================================================================
   deploy-pages:
     needs: [deploy-rpm-repo]
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && needs.deploy-rpm-repo.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       pages: write
@@ -2776,16 +2842,15 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
+        with: { fetch-depth: 0 }
 
       - name: Bump .upstream-version + Nix hash and open PR
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.check-version.outputs.version }}
           NIX_HASH: ${{ needs.test-nix.outputs.nix_hash }}
           TARBALL_SHA: ${{ needs.build-tarball.outputs.tarball_sha256 }}
-          REPO: ${{ github.repository }}
         run: |
           BRANCH="auto/upstream-v${VERSION}"
           git config user.name "github-actions[bot]"
@@ -2834,7 +2899,6 @@ jobs:
           git push origin "$BRANCH"
 
           gh pr create \
-            --repo "${REPO}" \
             --base master \
             --head "$BRANCH" \
             --title "Upstream bump to v${VERSION}" \
@@ -2854,8 +2918,13 @@ jobs:
   # version, so manual dispatches behave sensibly too.
   # ================================================================
   close-version-issue:
-    needs: [check-version, release, deploy-pages]
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.auto_pr != 'true'
+    # Release success is enough: Pages is optional (no GPG / fork without Pages).
+    needs: [check-version, release]
+    if: >-
+      always()
+      && github.event_name == 'workflow_dispatch'
+      && github.event.inputs.auto_pr != 'true'
+      && needs.release.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       issues: write
@@ -2863,18 +2932,18 @@ jobs:
       - name: Close matching new-version issue
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.check-version.outputs.version }}
-          REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          NUMBERS=$(gh issue list --repo "$REPO" --label "new-version" --state open \
+          NUMBERS=$(gh issue list --label "new-version" --state open \
             --search "New Claude Desktop v${VERSION}" --json number --jq '.[].number')
           if [ -z "$NUMBERS" ]; then
             echo "No open new-version issue for v${VERSION} - nothing to close."
             exit 0
           fi
           for N in $NUMBERS; do
-            gh issue close "$N" --repo "$REPO" --comment \
+            gh issue close "$N" --comment \
               "v${VERSION} was released automatically: all patches applied cleanly against the new upstream .deb, validation + smoke test passed, packages published, and \`.upstream-version\` was bumped by the release job. No manual action was needed. ([run](${RUN_URL}))"
             echo "Closed issue #${N}"
           done
@@ -2895,7 +2964,12 @@ jobs:
       deploy-rpm-repo,
       deploy-pages,
     ]
-    if: failure() && github.event_name == 'workflow_dispatch' && github.event.inputs.auto_pr != 'true'
+    # always(): deploy-pages / deploy-rpm-repo may be skipped when unsigned.
+    if: >-
+      always()
+      && failure()
+      && github.event_name == 'workflow_dispatch'
+      && github.event.inputs.auto_pr != 'true'
     runs-on: ubuntu-latest
     permissions:
       issues: write
