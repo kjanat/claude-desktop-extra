@@ -291,6 +291,10 @@ jobs:
           TARBALL=(claude-desktop-*-linux.tar.gz)
           (( ${#TARBALL[@]} == 1 )) || { echo "::error::expected 1 tarball, got ${#TARBALL[@]}"; exit 1; }
 
+          LABEL="$(ARCH="${arch:-amd64}" perl -E '$_=shift;/^(?<name>[a-z][a-z-]*?)-(?<version>\d+(?:\.\d+)+)-(?<os>[a-z0-9]+)(?:-(?<arch>[a-z0-9_]+))?\.(?:tar\.gz|zip)$/ or die "unrecognised asset name: $_\n";say join(" ",map{ucfirst}split/-/,$+{name})," $+{version}, ",ucfirst($+{os})," ",$+{arch}//$ENV{ARCH}' "${TARBALL[0]}")"
+          printf "Detected tarball:\t%s\n" "${TARBALL[0]}"
+          printf "Label:\t\t\t%s\n" "${LABEL}"
+
           if [[ "${reproducible}" == "true" && "${tar_reproducible}" == "true" ]]; then
             table="$(printf '%s\n' \
               "| layer   | sha256 (A ∪ B)   |" \
@@ -308,7 +312,7 @@ jobs:
           cat <<EOF | tee -a "${GITHUB_STEP_SUMMARY}" | gh release create "${RELEASE}" \
             --title "Repro probe ${version} (run ${GITHUB_RUN_NUMBER})" --prerelease \
             --target "${GITHUB_SHA}" \
-            --notes-file - "${TARBALL[0]}"
+            --notes-file - "${TARBALL[0]}#${LABEL}"
           Reproducibility probe for Claude Desktop ${version}, ${arch}.
 
           Two builds on separate runners from one GPG-verified upstream .deb.
