@@ -14,8 +14,6 @@
 #
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -28,17 +26,17 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Parse optional --arch flag (default: amd64)
 DEB_ARCH="amd64"
-if [ "${1:-}" = "--arch" ]; then
-    DEB_ARCH="$2"
-    shift 2
+if [[ "${1:-}" = "--arch" ]]; then
+	DEB_ARCH="$2"
+	shift 2
 fi
 
-case "$DEB_ARCH" in
-    amd64|arm64) ;;
-    *)
-        log_error "Unsupported architecture: $DEB_ARCH (supported: amd64, arm64)"
-        exit 1
-        ;;
+case "${DEB_ARCH}" in
+	amd64 | arm64) ;;
+	*)
+		log_error "Unsupported architecture: ${DEB_ARCH} (supported: amd64, arm64)"
+		exit 1
+		;;
 esac
 
 # Cowork runs its agent workspace in a lightweight KVM VM, which needs QEMU +
@@ -48,9 +46,13 @@ esac
 # amd64 (qemu-system-x86, ovmf, virtiofsd); on arm64 the QEMU + firmware names
 # differ (qemu-system-arm ships qemu-system-aarch64; qemu-efi-aarch64 is the
 # AAVMF firmware). /dev/kvm access still needs the user in the "kvm" group.
-case "$DEB_ARCH" in
-    amd64) COWORK_RECOMMENDS="qemu-system-x86, ovmf, virtiofsd" ;;
-    arm64) COWORK_RECOMMENDS="qemu-system-arm, qemu-efi-aarch64, virtiofsd" ;;
+case "${DEB_ARCH}" in
+	amd64) COWORK_RECOMMENDS="qemu-system-x86, ovmf, virtiofsd" ;;
+	arm64) COWORK_RECOMMENDS="qemu-system-arm, qemu-efi-aarch64, virtiofsd" ;;
+	*)
+		log_error "No Cowork recommends defined for ${DEB_ARCH}"
+		exit 1
+		;;
 esac
 
 # Parse positional arguments
@@ -58,50 +60,51 @@ TARBALL_PATH="${1:-}"
 OUTPUT_DIR="${2:-}"
 PKGREL="${3:-1}"
 
-if [ -z "$TARBALL_PATH" ] || [ -z "$OUTPUT_DIR" ]; then
-    echo "Usage: $0 [--arch amd64|arm64] <tarball_path> <output_dir> [pkgrel]"
-    echo ""
-    echo "Arguments:"
-    echo "  --arch        Target architecture (default: amd64, also: arm64)"
-    echo "  tarball_path  Path to claude-desktop-VERSION-linux[-aarch64].tar.gz"
-    echo "  output_dir    Directory to write .deb package"
-    echo "  pkgrel        Package release number (default: 1)"
-    echo ""
-    echo "Output:"
-    echo "  <output_dir>/claude-desktop-extra_<version>-<pkgrel>_<arch>.deb"
-    echo "  <output_dir>/claude-desktop-bin_<version>-<pkgrel>_all.deb (transitional)"
-    exit 1
+if [[ -z "${TARBALL_PATH}" ]] || [[ -z "${OUTPUT_DIR}" ]]; then
+	echo "Usage: $0 [--arch amd64|arm64] <tarball_path> <output_dir> [pkgrel]"
+	echo ""
+	echo "Arguments:"
+	echo "  --arch        Target architecture (default: amd64, also: arm64)"
+	echo "  tarball_path  Path to claude-desktop-VERSION-linux[-aarch64].tar.gz"
+	echo "  output_dir    Directory to write .deb package"
+	echo "  pkgrel        Package release number (default: 1)"
+	echo ""
+	echo "Output:"
+	echo "  <output_dir>/claude-desktop-extra_<version>-<pkgrel>_<arch>.deb"
+	echo "  <output_dir>/claude-desktop-bin_<version>-<pkgrel>_all.deb (transitional)"
+	exit 1
 fi
 
-if [ ! -f "$TARBALL_PATH" ]; then
-    log_error "Tarball not found: $TARBALL_PATH"
-    exit 1
+if [[ ! -f "${TARBALL_PATH}" ]]; then
+	log_error "Tarball not found: ${TARBALL_PATH}"
+	exit 1
 fi
 
 # Extract version from tarball filename (handles both -linux.tar.gz and -linux-aarch64.tar.gz)
-VERSION=$(basename "$TARBALL_PATH" | sed -E 's/claude-desktop-([0-9]+\.[0-9]+\.[0-9]+)-linux(-aarch64)?\.tar\.gz/\1/')
+TARBALL_NAME="$(basename "${TARBALL_PATH}")"
+VERSION="$(sed -E 's/claude-desktop-([0-9]+\.[0-9]+\.[0-9]+)-linux(-aarch64)?\.tar\.gz/\1/' <<<"${TARBALL_NAME}")"
 DEB_VERSION="${VERSION}-${PKGREL}"
-log_info "Building Debian package for version: $DEB_VERSION (arch: $DEB_ARCH)"
+log_info "Building Debian package for version: ${DEB_VERSION} (arch: ${DEB_ARCH})"
 
 # Create work directory
 WORK_DIR=$(mktemp -d)
-DEB_ROOT="$WORK_DIR/claude-desktop-extra_${DEB_VERSION}_${DEB_ARCH}"
+DEB_ROOT="${WORK_DIR}/claude-desktop-extra_${DEB_VERSION}_${DEB_ARCH}"
 
-cleanup() { rm -rf "$WORK_DIR"; }
+cleanup() { rm -rf "${WORK_DIR}"; }
 trap cleanup EXIT
 
 # Extract tarball
 log_info "Extracting Claude Desktop tarball..."
-mkdir -p "$WORK_DIR/tarball"
-tar -xzf "$TARBALL_PATH" -C "$WORK_DIR/tarball"
+mkdir -p "${WORK_DIR}/tarball"
+tar -xzf "${TARBALL_PATH}" -C "${WORK_DIR}/tarball"
 
 # Create directory structure
 log_info "Creating package structure..."
-mkdir -p "$DEB_ROOT/DEBIAN"
-mkdir -p "$DEB_ROOT/usr/lib/claude-desktop"
-mkdir -p "$DEB_ROOT/usr/bin"
-mkdir -p "$DEB_ROOT/usr/share/applications"
-mkdir -p "$DEB_ROOT/usr/share/icons/hicolor/256x256/apps"
+mkdir -p "${DEB_ROOT}/DEBIAN"
+mkdir -p "${DEB_ROOT}/usr/lib/claude-desktop"
+mkdir -p "${DEB_ROOT}/usr/bin"
+mkdir -p "${DEB_ROOT}/usr/share/applications"
+mkdir -p "${DEB_ROOT}/usr/share/icons"
 
 # Install the official Claude Desktop tree VERBATIM (from the tarball's
 # claude-desktop/ dir): the Electron runtime, resources/app.asar (our patched
@@ -111,17 +114,17 @@ mkdir -p "$DEB_ROOT/usr/share/icons/hicolor/256x256/apps"
 # exe-adjacent resources/app.asar (OnlyLoadAppFromAsar fuse), so no resources/
 # remapping and no binary rename are needed here.
 log_info "Installing Claude Desktop tree..."
-cp -r "$WORK_DIR/tarball/claude-desktop/"* "$DEB_ROOT/usr/lib/claude-desktop/"
+cp -r "${WORK_DIR}/tarball/claude-desktop/"* "${DEB_ROOT}/usr/lib/claude-desktop/"
 
 # Set SUID permission on chrome-sandbox (required by Chromium's sandbox)
-if [ -f "$DEB_ROOT/usr/lib/claude-desktop/chrome-sandbox" ]; then
-    chmod 4755 "$DEB_ROOT/usr/lib/claude-desktop/chrome-sandbox"
-    log_info "Set SUID permission on chrome-sandbox"
+if [[ -f "${DEB_ROOT}/usr/lib/claude-desktop/chrome-sandbox" ]]; then
+	chmod 4755 "${DEB_ROOT}/usr/lib/claude-desktop/chrome-sandbox"
+	log_info "Set SUID permission on chrome-sandbox"
 fi
 
 # Install launcher (full launcher from tarball with Wayland/X11 detection,
 # GPU fallback, SingletonLock cleanup, and logging)
-install -m755 "$WORK_DIR/tarball/launcher/claude-desktop" "$DEB_ROOT/usr/bin/claude-desktop"
+install -m755 "${WORK_DIR}/tarball/launcher/claude-desktop" "${DEB_ROOT}/usr/bin/claude-desktop"
 
 # Install desktop file.
 # Filename is "com.anthropic.Claude.desktop" to ride upstream's app identity
@@ -130,7 +133,7 @@ install -m755 "$WORK_DIR/tarball/launcher/claude-desktop" "$DEB_ROOT/usr/bin/cla
 # On native Wayland there is no WM_CLASS, so KWin/GNOME match by app_id; a mismatched
 # basename gives a generic icon + Alt+Tab duplicate (issue #148). StartupWMClass fixes X11.
 # Content mirrors the official Claude Desktop .deb.
-cat > "$DEB_ROOT/usr/share/applications/com.anthropic.Claude.desktop" << 'EOF'
+cat >"${DEB_ROOT}/usr/share/applications/com.anthropic.Claude.desktop" <<'EOF'
 [Desktop Entry]
 Name=Claude
 Comment=Desktop application for Claude.ai
@@ -156,29 +159,28 @@ Name=New Claude Code session
 Exec=claude-desktop claude://code/new
 EOF
 
-# Install icon
-if [ -f "$WORK_DIR/tarball/icons/claude-desktop.png" ]; then
-    cp "$WORK_DIR/tarball/icons/claude-desktop.png" \
-        "$DEB_ROOT/usr/share/icons/hicolor/256x256/apps/claude-desktop.png"
+# Install every icon size the tarball carries
+if [[ -d "${WORK_DIR}/tarball/icons/hicolor" ]]; then
+	cp -a "${WORK_DIR}/tarball/icons/hicolor" "${DEB_ROOT}/usr/share/icons/"
 fi
 
 # Debian policy: ship a copyright file under usr/share/doc/<pkg>/. The tarball
 # carries the upstream notice at its root (extracted from the official .deb by
 # build-patched-tarball.sh). Warn-only: pre-2026-07 release tarballs lack it.
-if [ -f "$WORK_DIR/tarball/copyright" ]; then
-    install -Dm644 "$WORK_DIR/tarball/copyright" \
-        "$DEB_ROOT/usr/share/doc/claude-desktop-extra/copyright"
+if [[ -f "${WORK_DIR}/tarball/copyright" ]]; then
+	install -Dm644 "${WORK_DIR}/tarball/copyright" \
+		"${DEB_ROOT}/usr/share/doc/claude-desktop-extra/copyright"
 else
-    log_warn "tarball has no copyright file (old tarball?) - package ships without usr/share/doc/claude-desktop-extra/copyright"
+	log_warn "tarball has no copyright file (old tarball?) - package ships without usr/share/doc/claude-desktop-extra/copyright"
 fi
 
 # Calculate installed size (in KB)
-INSTALLED_SIZE=$(du -sk "$DEB_ROOT" | cut -f1)
+INSTALLED_SIZE=$(du -sk "${DEB_ROOT}" | cut -f1)
 
 # Create control file.
 # Depends mirror the official Claude Desktop .deb's runtime needs (Electron 42).
 log_info "Creating control file..."
-cat > "$DEB_ROOT/DEBIAN/control" << EOF
+cat >"${DEB_ROOT}/DEBIAN/control" <<EOF
 Package: claude-desktop-extra
 Version: ${DEB_VERSION}
 Section: utils
@@ -204,7 +206,7 @@ EOF
 # postinst: SUID chrome-sandbox + AppArmor userns profile (mirrors the official
 # .deb's postinst) + cache refresh. The AppArmor profile is what lets Chromium's
 # namespace sandbox work on Ubuntu 24.04+ where unprivileged userns is restricted.
-cat > "$DEB_ROOT/DEBIAN/postinst" << 'EOF'
+cat >"${DEB_ROOT}/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
 
@@ -257,10 +259,10 @@ if command -v update-desktop-database >/dev/null 2>&1; then
     update-desktop-database /usr/share/applications || true
 fi
 EOF
-chmod +x "$DEB_ROOT/DEBIAN/postinst"
+chmod +x "${DEB_ROOT}/DEBIAN/postinst"
 
 # postrm: remove the AppArmor profile (mirrors the official .deb's postrm) + cache refresh.
-cat > "$DEB_ROOT/DEBIAN/postrm" << 'EOF'
+cat >"${DEB_ROOT}/DEBIAN/postrm" <<'EOF'
 #!/bin/sh
 set -e
 
@@ -283,17 +285,17 @@ case "$1" in
     ;;
 esac
 EOF
-chmod +x "$DEB_ROOT/DEBIAN/postrm"
+chmod +x "${DEB_ROOT}/DEBIAN/postrm"
 
 # Build the package
 log_info "Building .deb package..."
-mkdir -p "$OUTPUT_DIR"
-DEB_PATH="$OUTPUT_DIR/claude-desktop-extra_${DEB_VERSION}_${DEB_ARCH}.deb"
+mkdir -p "${OUTPUT_DIR}"
+DEB_PATH="${OUTPUT_DIR}/claude-desktop-extra_${DEB_VERSION}_${DEB_ARCH}.deb"
 
 if command -v fakeroot >/dev/null 2>&1; then
-    fakeroot dpkg-deb --build "$DEB_ROOT" "$DEB_PATH"
+	fakeroot dpkg-deb --build "${DEB_ROOT}" "${DEB_PATH}"
 else
-    dpkg-deb --build "$DEB_ROOT" "$DEB_PATH"
+	dpkg-deb --build "${DEB_ROOT}" "${DEB_PATH}"
 fi
 
 # --- TRANSITIONAL PACKAGE (claude-desktop-bin -> claude-desktop-extra rename) ---
@@ -302,10 +304,10 @@ fi
 # Architecture: all - one copy serves every arch in the repo.
 # Retire this block after the rename transition window ends.
 build_transitional_deb() {
-    local trans_root="$WORK_DIR/claude-desktop-bin_${DEB_VERSION}_all"
-    mkdir -p "$trans_root/DEBIAN" "$trans_root/usr/share/doc/claude-desktop-bin"
+	local trans_root="${WORK_DIR}/claude-desktop-bin_${DEB_VERSION}_all"
+	mkdir -p "${trans_root}/DEBIAN" "${trans_root}/usr/share/doc/claude-desktop-bin"
 
-    cat > "$trans_root/usr/share/doc/claude-desktop-bin/README" << EOF
+	cat >"${trans_root}/usr/share/doc/claude-desktop-bin/README" <<EOF
 This package has been renamed to claude-desktop-extra.
 claude-desktop-bin is now an empty transitional package and can be
 removed once claude-desktop-extra is installed:
@@ -313,10 +315,10 @@ removed once claude-desktop-extra is installed:
     sudo apt autoremove
 EOF
 
-    local trans_size
-    trans_size=$(du -sk "$trans_root" | cut -f1)
+	local trans_size
+	trans_size=$(du -sk "${trans_root}" | cut -f1)
 
-    cat > "$trans_root/DEBIAN/control" << EOF
+	cat >"${trans_root}/DEBIAN/control" <<EOF
 Package: claude-desktop-bin
 Version: ${DEB_VERSION}
 Section: oldlibs
@@ -332,12 +334,12 @@ Description: transitional package - renamed to claude-desktop-extra
  removed after installation.
 EOF
 
-    # postinst: migrate the APT source to the post-rename Pages URL. The old
-    # patrickjaja.github.io/claude-desktop-bin/ path is served by the legacy
-    # mirror only during the transition window; rewriting it here makes every
-    # upgraded install permanent. Guarded and idempotent - a migration hiccup
-    # must never fail the dpkg transaction.
-    cat > "$trans_root/DEBIAN/postinst" << 'EOF'
+	# postinst: migrate the APT source to the post-rename Pages URL. The old
+	# patrickjaja.github.io/claude-desktop-bin/ path is served by the legacy
+	# mirror only during the transition window; rewriting it here makes every
+	# upgraded install permanent. Guarded and idempotent - a migration hiccup
+	# must never fail the dpkg transaction.
+	cat >"${trans_root}/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -u
 SOURCES=/etc/apt/sources.list.d/claude-desktop.sources
@@ -348,15 +350,15 @@ if [ -f "$SOURCES" ] && grep -q 'patrickjaja.github.io/claude-desktop-bin/' "$SO
 fi
 exit 0
 EOF
-    chmod 0755 "$trans_root/DEBIAN/postinst"
+	chmod 0755 "${trans_root}/DEBIAN/postinst"
 
-    TRANSITIONAL_DEB_PATH="$OUTPUT_DIR/claude-desktop-bin_${DEB_VERSION}_all.deb"
-    if command -v fakeroot >/dev/null 2>&1; then
-        fakeroot dpkg-deb --build "$trans_root" "$TRANSITIONAL_DEB_PATH"
-    else
-        dpkg-deb --build "$trans_root" "$TRANSITIONAL_DEB_PATH"
-    fi
-    log_info "Built transitional package: $TRANSITIONAL_DEB_PATH"
+	TRANSITIONAL_DEB_PATH="${OUTPUT_DIR}/claude-desktop-bin_${DEB_VERSION}_all.deb"
+	if command -v fakeroot >/dev/null 2>&1; then
+		fakeroot dpkg-deb --build "${trans_root}" "${TRANSITIONAL_DEB_PATH}"
+	else
+		dpkg-deb --build "${trans_root}" "${TRANSITIONAL_DEB_PATH}"
+	fi
+	log_info "Built transitional package: ${TRANSITIONAL_DEB_PATH}"
 }
 
 TRANSITIONAL_DEB_PATH=""
@@ -364,18 +366,18 @@ build_transitional_deb
 # --- END TRANSITIONAL PACKAGE ---
 
 # Calculate SHA256
-SHA256=$(sha256sum "$DEB_PATH" | cut -d' ' -f1)
+SHA256=$(sha256sum "${DEB_PATH}" | cut -d' ' -f1)
 
 log_info "Debian package built successfully!"
-echo "  Version:  $DEB_VERSION"
-echo "  Path:     $DEB_PATH"
-echo "  SHA256:   $SHA256"
+echo "  Version:  ${DEB_VERSION}"
+echo "  Path:     ${DEB_PATH}"
+echo "  SHA256:   ${SHA256}"
 
 # Write build info
-cat > "$OUTPUT_DIR/deb-info.txt" << EOF
-VERSION="$DEB_VERSION"
-DEB="$DEB_PATH"
-SHA256="$SHA256"
+cat >"${OUTPUT_DIR}/deb-info.txt" <<EOF
+VERSION="${DEB_VERSION}"
+DEB="${DEB_PATH}"
+SHA256="${SHA256}"
 # Informational only - CI stages the transitional deb via its artifact glob.
-TRANSITIONAL_DEB="$TRANSITIONAL_DEB_PATH"
+TRANSITIONAL_DEB="${TRANSITIONAL_DEB_PATH}"
 EOF
