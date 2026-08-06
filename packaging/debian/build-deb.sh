@@ -247,7 +247,7 @@ esac
 # never fail the dpkg transaction (script runs under set -e).
 SOURCES=/etc/apt/sources.list.d/claude-desktop.sources
 if [ -f "$SOURCES" ] && grep -q 'patrickjaja.github.io/claude-desktop-bin/' "$SOURCES" 2>/dev/null; then
-    if sed -i 's|patrickjaja.github.io/claude-desktop-bin/|patrickjaja.github.io/claude-desktop-extra/|g' "$SOURCES" 2>/dev/null; then
+    if sed -i 's|patrickjaja.github.io/claude-desktop-bin/|kjanat.github.io/claude-desktop-extra/|g' "$SOURCES" 2>/dev/null; then
         echo "claude-desktop-extra: migrated APT source to the new repository URL"
     fi
 fi
@@ -344,7 +344,7 @@ EOF
 set -u
 SOURCES=/etc/apt/sources.list.d/claude-desktop.sources
 if [ -f "$SOURCES" ] && grep -q 'patrickjaja.github.io/claude-desktop-bin/' "$SOURCES" 2>/dev/null; then
-    if sed -i 's|patrickjaja.github.io/claude-desktop-bin/|patrickjaja.github.io/claude-desktop-extra/|g' "$SOURCES" 2>/dev/null; then
+    if sed -i 's|patrickjaja.github.io/claude-desktop-bin/|kjanat.github.io/claude-desktop-extra/|g' "$SOURCES" 2>/dev/null; then
         echo "claude-desktop-bin: migrated APT source to the new claude-desktop-extra repository URL"
     fi
 fi

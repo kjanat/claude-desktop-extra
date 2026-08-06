@@ -1,6 +1,6 @@
 # Maintainer: patrickjaja <patrickjajaa@gmail.com>
 # Contributor: Claude Desktop Linux Community
-# Package Repository: https://github.com/patrickjaja/claude-desktop-extra
+# Package Repository: https://github.com/{{GITHUB_REPO}}
 # (repository is being renamed to claude-desktop-extra; the old URL redirects)
 
 pkgname=claude-desktop-extra
@@ -8,7 +8,7 @@ pkgver={{VERSION}}
 pkgrel={{PKGREL}}
 pkgdesc="Claude Desktop (official Linux build) with extra features: Computer Use, custom themes, multi-profile, Quick Entry - for distros upstream does not ship"
 arch=('x86_64' 'aarch64')
-url="https://github.com/patrickjaja/claude-desktop-extra"
+url="https://github.com/{{GITHUB_REPO}}"
 license=('custom:Claude')
 # Grounded in `objdump -p | grep NEEDED` of every ELF we ship (Electron 42 main
 # binary, chrome_crashpad_handler, bundled virtiofsd, node-pty pty.node) plus

@@ -81,7 +81,7 @@ _legacy_repo_note() {
         echo "==> replace it in /etc/pacman.conf with:"
         echo "==>   [claude-desktop-extra${_suffix}]"
         echo "==>   SigLevel = Required DatabaseRequired"
-        echo "==>   Server = https://github.com/patrickjaja/claude-desktop-extra/releases/latest/download"
+        echo "==>   Server = https://github.com/kjanat/claude-desktop-extra/releases/latest/download"
         echo "==> then run: sudo pacman -Sy"
     fi
 }

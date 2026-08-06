@@ -222,7 +222,7 @@ fi
 # still on the pre-rename Pages URL (baseurl + gpgkey) at the new repository.
 # Guarded and idempotent - must never fail the rpm transaction.
 if [ -f "$REPO_FILE" ] && grep -q 'patrickjaja.github.io/claude-desktop-bin/' "$REPO_FILE" 2>/dev/null; then
-    sed -i 's|patrickjaja.github.io/claude-desktop-bin/|patrickjaja.github.io/claude-desktop-extra/|g' "$REPO_FILE" 2>/dev/null || :
+    sed -i 's|patrickjaja.github.io/claude-desktop-bin/|kjanat.github.io/claude-desktop-extra/|g' "$REPO_FILE" 2>/dev/null || :
     echo "claude-desktop-extra: migrated DNF repo config to the new repository URL" || :
 fi
 

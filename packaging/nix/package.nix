@@ -1,48 +1,49 @@
-{ lib
-, stdenvNoCC
-, fetchurl
-, electron
-, libsecret          # dlopened by Chromium's os_crypt for keyring credential storage
-, patchelf           # RPATH tripwire below
-, makeWrapper
-, makeDesktopItem
-, copyDesktopItems
-, imagemagick ? null    # Computer Use screenshot crop via convert - residual KDE-without-kwin-bridge spectacle tier only
-# Computer Use is first-party now: the bundled STATIC bridges (x11-bridge for
-# X11/XWayland, wlroots-bridge for Sway/Hyprland/Niri) run on NixOS as-is.
-# The two glibc-DYNAMIC bridges (kwin-portal-bridge for KDE 6.6+,
-# gnome-portal-bridge for GNOME Wayland) have a glibc mismatch on NixOS; pass a
-# natively built gnome-portal-bridge below to enable GNOME Wayland CU.
-, ydotool ? null        # input on exotic Wayland compositors ONLY (non-wlroots/GNOME/KDE; requires ydotoold daemon)
-# Computer Use — KDE Plasma Wayland (bundled bridge has glibc mismatch on NixOS)
-, spectacle ? null      # screenshot fallback (KDE Plasma on NixOS)
-# Computer Use — GNOME Wayland: natively built gnome-portal-bridge
-# (github.com/patrickjaja/gnome-bridge); sets GNOME_PORTAL_BRIDGE_BIN so the
-# executor uses it instead of the bundled (glibc-mismatched) binary.
-, gnome-portal-bridge ? null
-, glib ? null              # gsettings (flat mouse acceleration)
-# Claude Code CLI — required for Cowork, Dispatch, and Code integration
-, claude-code ? null    # auto-resolved by callPackage if in nixpkgs
-# Cowork agent workspace VM (also requires /dev/kvm + kvm group membership).
-# The app's capability probe needs THREE tools (issue #177):
-#   - qemu-system-x86_64 on PATH            -> qemu (--prefix PATH)
-#   - OVMF UEFI CODE+VARS firmware          -> OVMF (CLAUDE_OVMF_CODE_PATH)
-#   - a system virtiofsd                    -> virtiofsd (CLAUDE_VIRTIOFSD_PATH)
-# The bundled resources/virtiofsd does NOT count: the probe only uses the
-# bundled copy on Ubuntu 22.x (os-release gate), and NixOS can't exec it anyway
-# (foreign ld-linux interpreter). The CLAUDE_* env vars are honored by our
-# fix_cowork_firmware_paths_linux patch from release 1.18286.0 on; on older
-# pinned tarballs they are ignored and the workarounds are: add `pkgs.virtiofsd`
-# to `environment.systemPackages` (the probe checks the resulting
-# /run/current-system/sw/bin/virtiofsd, PR #178) and expose OVMF at a probed
-# /usr/share path via systemd.tmpfiles / an activation-script symlink.
-, qemu ? null           # provides qemu-system-x86_64 for the Cowork VM
-, virtiofsd ? null      # system virtiofsd (bundled one is Ubuntu-22-only)
-, OVMF ? null           # UEFI firmware; OVMF.fd output must ship CODE+VARS pair
-, socat ? null          # faster Quick Entry toggle (~2ms vs ~25ms python3)
-, nodejs ? null         # third-party MCP servers
-# Extra PATH entries for binaries not packaged in Nix (e.g. npm global, nvm)
-, extraSessionPaths ? []
+{
+  lib,
+  stdenvNoCC,
+  fetchurl,
+  electron,
+  libsecret, # dlopened by Chromium's os_crypt for keyring credential storage
+  patchelf, # RPATH tripwire below
+  makeWrapper,
+  makeDesktopItem,
+  copyDesktopItems,
+  imagemagick ? null, # Computer Use screenshot crop via convert - residual KDE-without-kwin-bridge spectacle tier only
+  # Computer Use is first-party now: the bundled STATIC bridges (x11-bridge for
+  # X11/XWayland, wlroots-bridge for Sway/Hyprland/Niri) run on NixOS as-is.
+  # The two glibc-DYNAMIC bridges (kwin-portal-bridge for KDE 6.6+,
+  # gnome-portal-bridge for GNOME Wayland) have a glibc mismatch on NixOS; pass a
+  # natively built gnome-portal-bridge below to enable GNOME Wayland CU.
+  ydotool ? null, # input on exotic Wayland compositors ONLY (non-wlroots/GNOME/KDE; requires ydotoold daemon)
+  # Computer Use — KDE Plasma Wayland (bundled bridge has glibc mismatch on NixOS)
+  spectacle ? null, # screenshot fallback (KDE Plasma on NixOS)
+  # Computer Use — GNOME Wayland: natively built gnome-portal-bridge
+  # (github.com/patrickjaja/gnome-bridge); sets GNOME_PORTAL_BRIDGE_BIN so the
+  # executor uses it instead of the bundled (glibc-mismatched) binary.
+  gnome-portal-bridge ? null,
+  glib ? null, # gsettings (flat mouse acceleration)
+  # Claude Code CLI — required for Cowork, Dispatch, and Code integration
+  claude-code ? null, # auto-resolved by callPackage if in nixpkgs
+  # Cowork agent workspace VM (also requires /dev/kvm + kvm group membership).
+  # The app's capability probe needs THREE tools (issue #177):
+  #   - qemu-system-x86_64 on PATH            -> qemu (--prefix PATH)
+  #   - OVMF UEFI CODE+VARS firmware          -> OVMF (CLAUDE_OVMF_CODE_PATH)
+  #   - a system virtiofsd                    -> virtiofsd (CLAUDE_VIRTIOFSD_PATH)
+  # The bundled resources/virtiofsd does NOT count: the probe only uses the
+  # bundled copy on Ubuntu 22.x (os-release gate), and NixOS can't exec it anyway
+  # (foreign ld-linux interpreter). The CLAUDE_* env vars are honored by our
+  # fix_cowork_firmware_paths_linux patch from release 1.18286.0 on; on older
+  # pinned tarballs they are ignored and the workarounds are: add `pkgs.virtiofsd`
+  # to `environment.systemPackages` (the probe checks the resulting
+  # /run/current-system/sw/bin/virtiofsd, PR #178) and expose OVMF at a probed
+  # /usr/share path via systemd.tmpfiles / an activation-script symlink.
+  qemu ? null, # provides qemu-system-x86_64 for the Cowork VM
+  virtiofsd ? null, # system virtiofsd (bundled one is Ubuntu-22-only)
+  OVMF ? null, # UEFI firmware; OVMF.fd output must ship CODE+VARS pair
+  socat ? null, # faster Quick Entry toggle (~2ms vs ~25ms python3)
+  nodejs ? null, # third-party MCP servers
+  # Extra PATH entries for binaries not packaged in Nix (e.g. npm global, nvm)
+  extraSessionPaths ? [ ],
 }:
 
 let
@@ -73,7 +74,7 @@ stdenvNoCC.mkDerivation {
   inherit version;
 
   src = fetchurl {
-    url = "https://github.com/patrickjaja/claude-desktop-extra/releases/download/${releaseTag}/claude-desktop-${version}-linux.tar.gz";
+    url = "https://github.com/kjanat/claude-desktop-extra/releases/download/${releaseTag}/claude-desktop-${version}-linux.tar.gz";
     inherit hash;
   };
 
@@ -82,7 +83,11 @@ stdenvNoCC.mkDerivation {
   # patchelf comes from the Linux stdenv anyway; declared explicitly because the
   # tripwire below pipes it into grep, so a missing binary would surface as
   # grep's exit status - i.e. the tripwire firing with the wrong explanation.
-  nativeBuildInputs = [ makeWrapper copyDesktopItems patchelf ];
+  nativeBuildInputs = [
+    makeWrapper
+    copyDesktopItems
+    patchelf
+  ];
 
   # Keep the RPATH nixpkgs' electron deliberately baked into its binary. Chromium
   # dlopens several libraries instead of linking them, so they never appear in
@@ -142,10 +147,20 @@ stdenvNoCC.mkDerivation {
       desktopName = "Claude";
       genericName = "AI Assistant";
       comment = "Desktop application for Claude.ai";
-      keywords = [ "AI" "Chat" "Assistant" "Claude" "Code" "LLM" ];
+      keywords = [
+        "AI"
+        "Chat"
+        "Assistant"
+        "Claude"
+        "Code"
+        "LLM"
+      ];
       exec = "claude-desktop %U";
       icon = "claude-desktop";
-      categories = [ "Utility" "Development" ];
+      categories = [
+        "Utility"
+        "Development"
+      ];
       mimeTypes = [ "x-scheme-handler/claude" ];
       startupNotify = true;
       startupWMClass = "com.anthropic.Claude";
@@ -214,16 +229,36 @@ stdenvNoCC.mkDerivation {
       ${lib.optionalString (socat != null) "--prefix PATH : ${socat}/bin"} \
       ${lib.optionalString (ydotool != null) "--prefix PATH : ${ydotool}/bin"} \
       ${lib.optionalString (spectacle != null) "--prefix PATH : ${spectacle}/bin"} \
-      ${lib.optionalString (gnome-portal-bridge != null) "--set-default GNOME_PORTAL_BRIDGE_BIN ${gnome-portal-bridge}/bin/gnome-portal-bridge"} \
+      ${
+        lib.optionalString (
+          gnome-portal-bridge != null
+        ) "--set-default GNOME_PORTAL_BRIDGE_BIN ${gnome-portal-bridge}/bin/gnome-portal-bridge"
+      } \
       ${lib.optionalString (glib != null) "--prefix PATH : ${glib}/bin"} \
       ${lib.optionalString (nodejs != null) "--prefix PATH : ${nodejs}/bin"} \
       ${lib.optionalString (qemu != null) "--prefix PATH : ${qemu}/bin"} \
-      ${lib.optionalString (virtiofsd != null) "--set-default CLAUDE_VIRTIOFSD_PATH ${virtiofsd}/bin/virtiofsd"} \
-      ${lib.optionalString (OVMF != null) "--set-default CLAUDE_OVMF_CODE_PATH ${OVMF.fd}/FV/${if stdenvNoCC.hostPlatform.isAarch64 then "AAVMF_CODE.fd" else "OVMF_CODE.fd"}"} \
-      ${lib.optionalString (claude-code != null && extraSessionPaths == []) "--prefix PATH : ${claude-code}/bin"} \
-      ${lib.concatMapStringsSep " \\\n      " (p:
-        let path = if builtins.isString p then p else "${p}/bin";
-        in "--prefix PATH : ${path}"
+      ${
+        lib.optionalString (
+          virtiofsd != null
+        ) "--set-default CLAUDE_VIRTIOFSD_PATH ${virtiofsd}/bin/virtiofsd"
+      } \
+      ${
+        lib.optionalString (OVMF != null)
+          "--set-default CLAUDE_OVMF_CODE_PATH ${OVMF.fd}/FV/${
+            if stdenvNoCC.hostPlatform.isAarch64 then "AAVMF_CODE.fd" else "OVMF_CODE.fd"
+          }"
+      } \
+      ${
+        lib.optionalString (
+          claude-code != null && extraSessionPaths == [ ]
+        ) "--prefix PATH : ${claude-code}/bin"
+      } \
+      ${lib.concatMapStringsSep " \\\n      " (
+        p:
+        let
+          path = if builtins.isString p then p else "${p}/bin";
+        in
+        "--prefix PATH : ${path}"
       ) extraSessionPaths}
 
     # Install every icon size the tarball carries
@@ -246,7 +281,10 @@ stdenvNoCC.mkDerivation {
     description = "Claude AI Desktop Application for Linux";
     homepage = "https://claude.ai";
     license = licenses.unfree;
-    platforms = [ "x86_64-linux" "aarch64-linux" ];
+    platforms = [
+      "x86_64-linux"
+      "aarch64-linux"
+    ];
     maintainers = [ ];
     mainProgram = "claude-desktop";
   };

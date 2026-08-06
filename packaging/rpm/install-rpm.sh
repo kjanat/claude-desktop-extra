@@ -1,24 +1,27 @@
 #!/bin/bash
 # install-rpm.sh — Set up the Claude Desktop RPM repository
 #
-# Usage: curl -fsSL https://patrickjaja.github.io/claude-desktop-extra/install-rpm.sh | sudo bash
+# Usage: curl -fsSL https://kjanat.github.io/claude-desktop-extra/install-rpm.sh | sudo bash
 
 set -euo pipefail
 
-REPO_URL="https://patrickjaja.github.io/claude-desktop-extra"
+REPO_URL="https://kjanat.github.io/claude-desktop-extra"
 REPO_FILE="/etc/yum.repos.d/claude-desktop.repo"
 
 # Check root
 if [ "$(id -u)" -ne 0 ]; then
-  echo "Error: This script must be run as root (use sudo)."
-  exit 1
+	echo "Error: This script must be run as root (use sudo)."
+	exit 1
 fi
 
 # Detect and validate architecture
 ARCH="$(uname -m)"
 case "$ARCH" in
-  x86_64|aarch64) ;;
-  *) echo "Error: Unsupported architecture: $ARCH (supported: x86_64, aarch64)"; exit 1 ;;
+	x86_64 | aarch64) ;;
+	*)
+		echo "Error: Unsupported architecture: $ARCH (supported: x86_64, aarch64)"
+		exit 1
+		;;
 esac
 echo "  Detected architecture: $ARCH"
 
@@ -29,7 +32,7 @@ rpm --import "$REPO_URL/gpg-key.asc"
 echo "  GPG key imported"
 
 # Add repository
-cat > "$REPO_FILE" <<EOF
+cat >"$REPO_FILE" <<EOF
 [claude-desktop]
 name=Claude Desktop for Linux
 baseurl=$REPO_URL/rpm/
@@ -43,9 +46,9 @@ echo "  Repository added to $REPO_FILE"
 
 # Update package cache
 if command -v dnf &>/dev/null; then
-  dnf makecache --repo=claude-desktop -q
+	dnf makecache --repo=claude-desktop -q
 elif command -v yum &>/dev/null; then
-  yum makecache --disablerepo='*' --enablerepo=claude-desktop -q
+	yum makecache --disablerepo='*' --enablerepo=claude-desktop -q
 fi
 
 echo ""

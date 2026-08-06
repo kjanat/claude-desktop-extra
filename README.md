@@ -1,15 +1,15 @@
 # Claude Desktop for Linux
 
-[![Claude Desktop](https://img.shields.io/endpoint?url=https://patrickjaja.github.io/claude-desktop-extra/badges/version-check.json)](https://claude.ai/download)
-[![Build & Release](https://github.com/patrickjaja/claude-desktop-extra/actions/workflows/build-and-release.yml/badge.svg)](https://github.com/patrickjaja/claude-desktop-extra/actions/workflows/build-and-release.yml)
-[![Website](https://img.shields.io/badge/Website-Landing_Page-a78bfa?logo=github)](https://patrickjaja.github.io/claude-desktop-extra/)
+[![Claude Desktop](https://img.shields.io/endpoint?url=https://kjanat.github.io/claude-desktop-extra/badges/version-check.json)](https://claude.ai/download)
+[![Build & Release](https://github.com/kjanat/claude-desktop-extra/actions/workflows/build-and-release.yml/badge.svg)](https://github.com/kjanat/claude-desktop-extra/actions/workflows/build-and-release.yml)
+[![Website](https://img.shields.io/badge/Website-Landing_Page-a78bfa?logo=github)](https://kjanat.github.io/claude-desktop-extra/)
 [![Reddit](https://img.shields.io/badge/Reddit-Discussion-FF4500?logo=reddit&logoColor=white)](https://www.reddit.com/r/ClaudeAI/comments/1r871b0/claude_desktop_on_linux_chat_cowork_code/)
 
-[![Pacman repo](https://img.shields.io/endpoint?url=https://patrickjaja.github.io/claude-desktop-extra/badges/pacman-repo.json)](https://github.com/patrickjaja/claude-desktop-extra#arch-linux--manjaro-pacman-repository)
-[![APT repo](https://img.shields.io/endpoint?url=https://patrickjaja.github.io/claude-desktop-extra/badges/apt-repo.json)](https://github.com/patrickjaja/claude-desktop-extra#debian--ubuntu-apt-repository)
-[![RPM repo](https://img.shields.io/endpoint?url=https://patrickjaja.github.io/claude-desktop-extra/badges/rpm-repo.json)](https://github.com/patrickjaja/claude-desktop-extra#fedora--rhel-dnf-repository)
-[![AppImage](https://img.shields.io/endpoint?url=https://patrickjaja.github.io/claude-desktop-extra/badges/appimage.json)](https://github.com/patrickjaja/claude-desktop-extra#appimage-any-distro)
-[![Nix flake](https://img.shields.io/endpoint?url=https://patrickjaja.github.io/claude-desktop-extra/badges/nix.json)](https://github.com/patrickjaja/claude-desktop-extra#nixos--nix)
+[![Pacman repo](https://img.shields.io/endpoint?url=https://kjanat.github.io/claude-desktop-extra/badges/pacman-repo.json)](https://github.com/kjanat/claude-desktop-extra#arch-linux--manjaro-pacman-repository)
+[![APT repo](https://img.shields.io/endpoint?url=https://kjanat.github.io/claude-desktop-extra/badges/apt-repo.json)](https://github.com/kjanat/claude-desktop-extra#debian--ubuntu-apt-repository)
+[![RPM repo](https://img.shields.io/endpoint?url=https://kjanat.github.io/claude-desktop-extra/badges/rpm-repo.json)](https://github.com/kjanat/claude-desktop-extra#fedora--rhel-dnf-repository)
+[![AppImage](https://img.shields.io/endpoint?url=https://kjanat.github.io/claude-desktop-extra/badges/appimage.json)](https://github.com/kjanat/claude-desktop-extra#appimage-any-distro)
+[![Nix flake](https://img.shields.io/endpoint?url=https://kjanat.github.io/claude-desktop-extra/badges/nix.json)](https://github.com/kjanat/claude-desktop-extra#nixos--nix)
 
 **Anthropic's official Claude Desktop Linux build, repackaged for the distros Anthropic doesn't ship - plus Linux-only extras.**
 
@@ -64,7 +64,7 @@ sudo pacman -Syu claude-desktop-extra
 
 Updates arrive via `sudo pacman -Syu` (AUR helpers wrap pacman, so `yay -Syu` picks them up too). Packages and the repository database are GPG-signed with the same key as our APT and RPM repos.
 
-**Alternative: AUR.** The same PKGBUILD is published as [`claude-desktop-extra`](https://aur.archlinux.org/packages/claude-desktop-extra), updated by CI on every release. It builds from the checksummed release tarball; the pacman repo above ships the same content pre-built and is the recommended path.
+**Alternative: upstream AUR.** Patrick's canonical project publishes [`claude-desktop-extra`](https://aur.archlinux.org/packages/claude-desktop-extra). It does not track this fork; use the pacman repository above for this fork's builds.
 
 ```bash
 yay -S claude-desktop-extra
@@ -80,19 +80,20 @@ The install script only automates these steps. Append to `/etc/pacman.conf` (on 
 ```ini
 [claude-desktop-extra]
 SigLevel = Required DatabaseRequired
-Server = https://github.com/patrickjaja/claude-desktop-extra/releases/latest/download
+Server = https://github.com/kjanat/claude-desktop-extra/releases/latest/download
 ```
 
 Then import the signing key, **verify its fingerprint**, and locally sign it:
 
 ```bash
-curl -fsSL https://patrickjaja.github.io/claude-desktop-extra/gpg-key.asc -o /tmp/claude-desktop-extra.asc
+curl -fsSL https://kjanat.github.io/claude-desktop-extra/gpg-key.asc -o /tmp/claude-desktop-extra.asc
 gpg --show-keys --with-fingerprint /tmp/claude-desktop-extra.asc
-# Must print: 825A 7D15 D78B ABE4 5646  D5DF 3824 09F5 9790 8867 - stop here if it does not.
+# Compare this fingerprint with the value on the matching GitHub release.
 
 sudo pacman-key --init            # no-op on a normal Arch install; needed on fresh keyrings, containers and chroots
 sudo pacman-key --add /tmp/claude-desktop-extra.asc
-sudo pacman-key --lsign-key 825A7D15D78BABE45646D5DF382409F597908867
+KEY_ID=$(gpg --show-keys --with-colons /tmp/claude-desktop-extra.asc | awk -F: '/^pub:/ { print $5; exit }')
+sudo pacman-key --lsign-key "$KEY_ID"
 sudo pacman -Syu claude-desktop-extra
 ```
 
@@ -107,7 +108,7 @@ The `PKGBUILD` is generated and CI-tested on every release, and published as a r
 
 ```bash
 mkdir claude-desktop-extra && cd claude-desktop-extra
-base=https://github.com/patrickjaja/claude-desktop-extra/releases/latest/download
+base=https://github.com/kjanat/claude-desktop-extra/releases/latest/download
 curl -fsSL -O "$base/PKGBUILD" -O "$base/claude-desktop-extra.install"
 makepkg -si
 ```
@@ -120,7 +121,7 @@ makepkg -si
 
 ```bash
 # Add repository (one-time setup)
-curl -fsSL https://patrickjaja.github.io/claude-desktop-extra/install.sh | sudo bash
+curl -fsSL https://kjanat.github.io/claude-desktop-extra/install.sh | sudo bash
 
 # Install
 sudo apt install claude-desktop-extra
@@ -134,7 +135,7 @@ Updates are automatic via `sudo apt update && sudo apt upgrade`.
 <summary>Manual .deb install (without APT repo)</summary>
 
 ```bash
-wget https://github.com/patrickjaja/claude-desktop-extra/releases/latest/download/claude-desktop-extra_1.24012.9-14_amd64.deb
+wget https://github.com/kjanat/claude-desktop-extra/releases/latest/download/claude-desktop-extra_1.24012.9-14_amd64.deb
 sudo dpkg -i claude-desktop-extra_*_amd64.deb
 ```
 
@@ -144,7 +145,7 @@ sudo dpkg -i claude-desktop-extra_*_amd64.deb
 
 ```bash
 # Add repository (one-time setup)
-curl -fsSL https://patrickjaja.github.io/claude-desktop-extra/install-rpm.sh | sudo bash
+curl -fsSL https://kjanat.github.io/claude-desktop-extra/install-rpm.sh | sudo bash
 
 # Install
 sudo dnf install claude-desktop-extra
@@ -158,7 +159,7 @@ Updates are automatic via `sudo dnf upgrade`.
 <summary>Manual .rpm install (without DNF repo)</summary>
 
 ```bash
-wget https://github.com/patrickjaja/claude-desktop-extra/releases/latest/download/claude-desktop-extra-1.24012.9-14.x86_64.rpm
+wget https://github.com/kjanat/claude-desktop-extra/releases/latest/download/claude-desktop-extra-1.24012.9-14.x86_64.rpm
 sudo dnf install ./claude-desktop-extra-*.x86_64.rpm
 ```
 
@@ -168,10 +169,10 @@ sudo dnf install ./claude-desktop-extra-*.x86_64.rpm
 
 ```bash
 # Try without installing
-nix run github:patrickjaja/claude-desktop-extra
+nix run github:kjanat/claude-desktop-extra
 
 # Or add to flake.nix
-nix profile install github:patrickjaja/claude-desktop-extra
+nix profile install github:kjanat/claude-desktop-extra
 ```
 
 <details>
@@ -179,7 +180,7 @@ nix profile install github:patrickjaja/claude-desktop-extra
 
 ```nix
 {
-  inputs.claude-desktop.url = "github:patrickjaja/claude-desktop-extra";
+  inputs.claude-desktop.url = "github:kjanat/claude-desktop-extra";
 
   # In your system config:
   environment.systemPackages = [
@@ -211,7 +212,7 @@ The `claude://` protocol handler (needed for OAuth sign-in) is **automatically r
 
 ```bash
 # Download from GitHub Releases
-wget https://github.com/patrickjaja/claude-desktop-extra/releases/latest/download/Claude_Desktop-1.24012.9-x86_64.AppImage
+wget https://github.com/kjanat/claude-desktop-extra/releases/latest/download/Claude_Desktop-1.24012.9-x86_64.AppImage
 chmod +x Claude_Desktop-*-x86_64.AppImage
 ./Claude_Desktop-*-x86_64.AppImage
 ```
@@ -223,7 +224,7 @@ chmod +x Claude_Desktop-*-x86_64.AppImage
 ### From Source
 
 ```bash
-git clone https://github.com/patrickjaja/claude-desktop-extra.git
+git clone https://github.com/kjanat/claude-desktop-extra.git
 cd claude-desktop-extra
 ./scripts/build-local.sh --install
 ```
@@ -240,21 +241,15 @@ ARM64 `.deb`, `.rpm`, AppImage, and Nix packages are available for **Raspberry P
 
 The project was renamed from `claude-desktop-bin` to `claude-desktop-extra`, and the switch is automatic: the package replaces itself on your next regular upgrade (apt, dnf, and pacman all handle it), and your themes / flag overrides (`claude-desktop-bin.jsonc`) are migrated on first launch.
 
-One exception: an existing `[claude-desktop-bin]` section in `/etc/pacman.conf` points at a temporary transition mirror - replace it with the `[claude-desktop-extra]` stanza from the [Arch section above](#arch-linux--manjaro-pacman-repository) (same `SigLevel`, same signing key; aarch64: `[claude-desktop-extra-aarch64]`).
+One exception: an existing `[claude-desktop-bin]` section in `/etc/pacman.conf` points at Patrick's transition mirror. Replace it with the `[claude-desktop-extra]` stanza from the [Arch section above](#arch-linux--manjaro-pacman-repository) and import this fork's signing key (aarch64: `[claude-desktop-extra-aarch64]`).
 
 ### Verifying the repository signing key
 
-The APT, DNF and pacman repositories are GPG-signed with the same key. The install scripts import it from GitHub Pages over HTTPS. To verify the key out-of-band, compare its fingerprint against the value published here (this README lives in the git repo, a separate channel from the Pages-hosted key):
-
-```text
-Key:         Claude Desktop Linux (claude-desktop-bin repo signing key) <patrickjajaa@gmail.com>
-Type:        RSA 4096
-Fingerprint: 825A 7D15 D78B ABE4 5646  D5DF 3824 09F5 9790 8867
-```
+The APT, DNF and pacman repositories are GPG-signed with the same key. The install scripts import it from GitHub Pages over HTTPS. Each GitHub release publishes the signing-key fingerprint; compare it before trusting the key:
 
 ```bash
-curl -fsSL https://patrickjaja.github.io/claude-desktop-extra/gpg-key.asc | gpg --show-keys --with-fingerprint
-# The printed fingerprint must match the value above.
+curl -fsSL https://kjanat.github.io/claude-desktop-extra/gpg-key.asc | gpg --show-keys --with-fingerprint
+# The printed fingerprint must match the value on the GitHub release page.
 ```
 
 ## Computer Use

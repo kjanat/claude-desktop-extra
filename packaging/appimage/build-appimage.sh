@@ -150,7 +150,7 @@ if [ "$1" = "--appimage-update" ]; then
     else
         echo "appimageupdatetool not found."
         echo "Install it from: https://github.com/AppImageCommunity/AppImageUpdate"
-        echo "Or update manually: https://github.com/patrickjaja/claude-desktop-extra/releases/latest"
+        echo "Or update manually: https://github.com/kjanat/claude-desktop-extra/releases/latest"
         exit 1
     fi
 fi
@@ -237,7 +237,10 @@ fi
 # Embed update information for AppImage delta updates (gh-releases-zsync transport).
 # AppImages shipped before the claude-desktop-extra rename resolve updates through
 # the old claude-desktop-bin repo path - the legacy mirror serves them there.
-UPDATE_INFO="gh-releases-zsync|patrickjaja|claude-desktop-extra|latest|Claude_Desktop-*-${APPIMAGE_ARCH}.AppImage.zsync"
+UPDATE_REPOSITORY="${GITHUB_REPOSITORY:-kjanat/claude-desktop-extra}"
+UPDATE_OWNER="${UPDATE_REPOSITORY%%/*}"
+UPDATE_NAME="${UPDATE_REPOSITORY#*/}"
+UPDATE_INFO="gh-releases-zsync|${UPDATE_OWNER}|${UPDATE_NAME}|latest|Claude_Desktop-*-${APPIMAGE_ARCH}.AppImage.zsync"
 log_info "Embedding update info: ${UPDATE_INFO}"
 
 if ! command -v zsyncmake &>/dev/null; then
