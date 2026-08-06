@@ -4,7 +4,7 @@
 # scripts/build-patched-tarball.sh.
 ---
 name: Repro & Attest Test
-on: { push: { branches: [repro-attest] }, workflow_dispatch: null }
+on: { push: { branches: [repro-attest, master] }, workflow_dispatch: null }
 concurrency: { group: "repro-attest-${{ github.ref }}", cancel-in-progress: true }
 permissions: { contents: read }
 env: { arch: amd64 }
@@ -287,7 +287,22 @@ jobs:
         run: |
           shopt -s nullglob
 
-          RELEASE="repro-test-${version}-${GITHUB_RUN_NUMBER}"
+          if [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
+            RELEASE="v${version}"
+            if gh release view "${RELEASE}" &>/dev/null; then
+              RELEASE="v${version}-${GITHUB_RUN_NUMBER}"
+            fi
+            TITLE="Claude Desktop ${version}"
+            RELEASE_FLAGS=(--latest)
+            INTRO="Claude Desktop ${version} for Linux ${arch}, repackaged from Anthropic's official .deb."
+          else
+            RELEASE="repro-test-${version}-${GITHUB_RUN_NUMBER}"
+            TITLE="Repro probe ${version} (run ${GITHUB_RUN_NUMBER})"
+            RELEASE_FLAGS=(--prerelease)
+            INTRO="Reproducibility probe for Claude Desktop ${version}, ${arch}."
+          fi
+          printf "Release:\t\t%s\n" "${RELEASE}"
+
           TARBALL=(claude-desktop-*-linux.tar.gz)
           (( ${#TARBALL[@]} == 1 )) || { echo "::error::expected 1 tarball, got ${#TARBALL[@]}"; exit 1; }
 
@@ -310,10 +325,10 @@ jobs:
           fi
 
           cat <<EOF | tee -a "${GITHUB_STEP_SUMMARY}" | gh release create "${RELEASE}" \
-            --title "Repro probe ${version} (run ${GITHUB_RUN_NUMBER})" --prerelease \
+            --title "${TITLE}" "${RELEASE_FLAGS[@]}" \
             --target "${GITHUB_SHA}" \
             --notes-file - "${TARBALL[0]}#${LABEL}"
-          Reproducibility probe for Claude Desktop ${version}, ${arch}.
+          ${INTRO}
 
           Two builds on separate runners from one GPG-verified upstream .deb.
           The Computer Use bridges are built once, at a pinned commit, and handed to both legs, so the tarball is a complete package.
