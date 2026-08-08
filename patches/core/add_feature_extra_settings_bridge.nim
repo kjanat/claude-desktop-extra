@@ -50,13 +50,10 @@ proc apply*(input: string): string =
       " markers) -- refusing to patch on top; re-audit the preload bundle"
     quit(1)
 
-  let strictPrefix = "\"use strict\";"
-  if result.startsWith(strictPrefix):
-    result = strictPrefix & "\n" & BRIDGE_JS & result[strictPrefix.len .. ^1]
-    echo "  [OK] cdbExtra bridge inserted after \"use strict\""
-  else:
-    echo "  [FAIL] mainView.js does not start with \"use strict\"; -- preload bundle shape changed, re-audit"
-    quit(1)
+  # BRIDGE_JS is self-contained (its own "use strict"; + IIFE), so it can be
+  # prepended regardless of what mainView.js itself starts with.
+  result = BRIDGE_JS & "\n" & result
+  echo "  [OK] cdbExtra bridge prepended"
 
   let found = markersPresent(result)
   if found < MARKERS.len:

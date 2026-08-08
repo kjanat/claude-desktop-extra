@@ -192,7 +192,7 @@ proc apply*(input: string): string =
     patchesApplied += 1
   else:
     let ruaPattern =
-      re2"(requestUserAttention\(\)\{)(var [\w$]+;this\.isAppFocusedAndVisible\(\)\|\|)"
+      re2"""(requestUserAttention\(\)\{)((?:var [\w$]+;)?this\.isAppFocusedAndVisible\(\)\|\|)"""
     var ruaCount = 0
     result = result.replace(
       ruaPattern,

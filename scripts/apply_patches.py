@@ -16,6 +16,7 @@ Usage: apply_patches.py <patches_dir> <app_dir>
 <app_dir> is the directory that contains app.asar.contents/, i.e. the same
 path that build-patched-tarball.sh uses as "$WORK_DIR/app".
 """
+
 import os
 import re
 import shutil
@@ -87,13 +88,17 @@ def resolve_target(app_dir: Path, target_spec: str):
 # --- Code-split chunk support -------------------------------------------------
 # Since Claude Desktop v1.19367.0 the main bundle is code-split: .vite/build/
 # index.js is a tiny loader stub and the real code lives in content-hashed
-# sibling chunks (index.chunk-<hash>.js). Chunk names change every release, so
-# patches keep targeting index.js and the orchestrator transparently stages the
-# stub + all sibling chunks as ONE concatenated file (newline-separated boundary
-# markers between parts). Patch binaries see the whole logical bundle, so their
-# strict aggregate match counts keep working exactly as on the old monolith.
-# After the group succeeds, the staged file is split back on the markers and
-# each part is written to its original file.
+# sibling chunks (index.chunk-<hash>.js). Since v1.25927.0 the bundler also
+# emits a SECOND numbered chunk group (index2.chunk-<hash>.js) for a separate
+# lazy-require() boundary inside index.chunk-*.js - same dependency graph,
+# just a different Rollup chunk namespace. Chunk names AND the numbered suffix
+# change per release, so patches keep targeting index.js and the orchestrator
+# transparently stages the stub + every sibling chunk group as ONE concatenated
+# file (newline-separated boundary markers between parts). Patch binaries see
+# the whole logical bundle, so their strict aggregate match counts keep
+# working exactly as on the old monolith. After the group succeeds, the staged
+# file is split back on the markers and each part is written to its original
+# file.
 #
 # Safety: markers are comment lines a patch regex cannot plausibly produce or
 # match across ('.' does not match newline in the patch regexes). If a patch
@@ -105,8 +110,15 @@ MARKER_RE = re.compile(rb"\n/\*__CDB_SPLIT__([^*\n]+?)__\*/\n")
 
 
 def chunk_parts(target_path: Path) -> list[Path] | None:
-    """Return [target, chunk1, chunk2, ...] if code-split siblings exist, else None."""
-    chunks = sorted(target_path.parent.glob(f"{target_path.stem}.chunk-*{target_path.suffix}"))
+    """Return [target, chunk1, chunk2, ...] if code-split siblings exist, else None.
+
+    Globs "<stem>*.chunk-*<suffix>" rather than "<stem>.chunk-*<suffix>" so a
+    numbered second chunk group (index2.chunk-*.js alongside index.chunk-*.js)
+    is picked up too - see the module comment above.
+    """
+    chunks = sorted(
+        target_path.parent.glob(f"{target_path.stem}*.chunk-*{target_path.suffix}")
+    )
     return [target_path] + chunks if chunks else None
 
 
@@ -136,8 +148,7 @@ def check_cross_part_identifiers(contents: list[bytes], names: list[str]) -> boo
     global_names = set()
     for content in contents:
         global_names.update(
-            m.decode()
-            for m in re.findall(rb"globalThis\.(__cdb[\w$]*)\s*=", content)
+            m.decode() for m in re.findall(rb"globalThis\.(__cdb[\w$]*)\s*=", content)
         )
     parts_by_ident: dict[str, list[str]] = {}
     for name, content in zip(names, contents):
@@ -273,9 +284,7 @@ def main():
                     file=sys.stderr,
                 )
                 sys.exit(1)
-            nim_jobs_by_target.setdefault(real, []).append(
-                (patch_file, nim_bin)
-            )
+            nim_jobs_by_target.setdefault(real, []).append((patch_file, nim_bin))
         elif ptype == "nim-dir":
             # Handled separately by build script (e.g., ion-dist patches)
             pass

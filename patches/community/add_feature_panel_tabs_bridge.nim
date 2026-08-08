@@ -28,13 +28,10 @@ proc apply*(input: string): string =
     echo "  [FAIL] Partial injection (" & $present & "/" & $MARKERS.len &
       " markers) -- refusing to patch on top; re-audit the preload bundle"
     quit(1)
-  let strictPrefix = "\"use strict\";"
-  if result.startsWith(strictPrefix):
-    result = strictPrefix & "\n" & BRIDGE_JS & result[strictPrefix.len .. ^1]
-    echo "  [OK] cdbTabs bridge inserted after \"use strict\""
-  else:
-    echo "  [FAIL] mainView.js does not start with \"use strict\"; -- re-audit"
-    quit(1)
+  # BRIDGE_JS is self-contained (its own "use strict"; + IIFE), so it can be
+  # prepended regardless of what mainView.js itself starts with.
+  result = BRIDGE_JS & "\n" & result
+  echo "  [OK] cdbTabs bridge prepended"
   if markersPresent(result) != MARKERS.len:
     echo "  [FAIL] markers absent after patching"
     quit(1)

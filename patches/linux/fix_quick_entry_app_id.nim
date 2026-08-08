@@ -179,7 +179,7 @@ proc apply*(input: string): string =
   # 1. Pre-create: swap CHROME_DESKTOP to the Quick Entry id.
   # -----------------------------------------------------------------
   let preCreatePattern = re2(
-    r"""([\w$]+)\|\|\(([\w$]+)=new ([\w$]+)\.BrowserWindow\(\{titleBarStyle:"hidden""""
+    r"""([\w$]+)\|\|\(([\w$]+)=new ([\w$]+)\.BrowserWindow\(\{titleBarStyle:[`"]hidden[`"]"""
   )
   var preCount = 0
   result = result.replace(
@@ -210,7 +210,7 @@ proc apply*(input: string): string =
   # 2. Post-create: schedule reset on the window's ready-to-show.
   # -----------------------------------------------------------------
   let loadFilePattern = re2(
-    r"""(([\w$]+)\.loadFile\(([\w$]+)\.join\(([\w$]+)\.app\.getAppPath\(\),"\.vite/renderer/quick_window/quick-window\.html"\)\))"""
+    r"""(([\w$]+)\.loadFile\(([\w$]+(?:\.[\w$]+)?)\.join\(([\w$]+)\.app\.getAppPath\(\),[`"]\.vite/renderer/quick_window/quick-window\.html[`"]\)\))"""
   )
   var postCount = 0
   result = result.replace(
@@ -219,8 +219,15 @@ proc apply*(input: string): string =
       inc postCount
       let original = s[m.group(0)]
       let winVar = s[m.group(1)]
-      let electronVar = s[m.group(2)]
-      let joinVar = s[m.group(3)]
+      # Capture order in the source is loadFile(<path module>.join(<electron>
+      # .app.getAppPath(),...)): group 2 is the path module, group 3 the
+      # Electron alias. These two were assigned swapped since the runtime
+      # desktopName read was added, so the injected reset called
+      # <electron>.join() and <path>.app.setDesktopName() - both TypeErrors,
+      # both silently caught, so the reset always fell back to the hardcoded
+      # id and never called setDesktopName at all.
+      let joinVar = s[m.group(2)]
+      let electronVar = s[m.group(3)]
       # Resolve the main app_id from the app's own package.json `desktopName`
       # at runtime - that is what Chromium's GetXdgAppId() derives the default
       # window app_id from, so resetting to it restores the exact identity

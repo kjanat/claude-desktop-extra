@@ -66,7 +66,7 @@ proc apply*(input: string): string =
     # Linux dirs into BOTH — polluting `eLn` (which holds only absolute j.join()
     # paths) with 3 bare relative strings. Requiring the trailing `;` restricts the
     # match to the correct sensitive-dirs array. EXPECT EXACTLY ONE match.
-    let pattern = re2"""("PowerShell"\)\]:\[\])(\];)"""
+    let pattern = re2"""([`"]PowerShell[`"]\)\]:\[\])(\];)"""
 
     var count = 0
     result = result.replace(

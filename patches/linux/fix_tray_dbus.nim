@@ -22,7 +22,8 @@ proc apply*(input: string): string =
   var failed = false
 
   # Step 1: Find the tray function name from menuBarEnabled listener
-  let listenerPat = re2"[\w$]+\.on\(""menuBarEnabled"",\(\)=>\{([\w$]+)\(\)\}\)"
+  let listenerPat =
+    re2"[\w$]+(?:\.[\w$]+)?\.on\([`""]menuBarEnabled[`""],\(\)=>\{([\w$]+)\(\)\}\)"
   var trayFunc = ""
   for m in result.findAll(listenerPat):
     trayFunc = result[m.group(0)]
@@ -95,20 +96,24 @@ proc apply*(input: string): string =
       echo "  [FAIL] async conversion: function pattern not found"
       failed = true
 
-  # Step 4: Find first const variable in the function
+  # Step 4: Find first local variable declaration in the function (sanity
+  # check that the function body looks normal before step 5 gates on it).
+  # v1.25927.0 rewrote Gu() to declare everything with `let`, no `const` at
+  # all, so the anchor must accept either keyword.
   var firstConst = ""
   if trayFunc != "":
-    let constPat =
-      re2("async function " & escapeRe(trayFunc) & "\\(\\)\\{.+?const ([\\w$]+)=")
+    let constPat = re2(
+      "async function " & escapeRe(trayFunc) & "\\(\\)\\{.+?(?:const|let) ([\\w$]+)="
+    )
     for m in result.findAll(constPat):
       firstConst = result[m.group(0)]
       break
 
     if firstConst == "":
-      echo "  [FAIL] first const in function: 0 matches"
+      echo "  [FAIL] first local declaration in function: 0 matches"
       failed = true
     else:
-      echo &"  [OK] first const in function: found '{firstConst}'"
+      echo &"  [OK] first local declaration in function: found '{firstConst}'"
 
   # Step 5: Add mutex guard
   if trayFunc != "" and firstConst != "":
@@ -155,7 +160,7 @@ proc apply*(input: string): string =
   # change is pointless and causes ghost icons on XFCE/StatusNotifierWatcher.
   if trayFunc != "":
     let themeCallPat = re2(
-      "(nativeTheme\\.on\\(\"updated\",\\(\\)=>\\{[^}]*?[\\w$]+\\(\\),)" &
+      "(nativeTheme\\.on\\([`\"]updated[`\"],\\(\\)=>\\{[^}]*?[\\w$]+\\(\\),)" &
         escapeRe(trayFunc) & "\\(\\),"
     )
     var themeCount = 0
@@ -167,17 +172,17 @@ proc apply*(input: string): string =
     )
     if themeCount > 0:
       echo &"  [OK] nativeTheme handler: removed {trayFunc}() call (Linux icon is static)"
-    elif ("nativeTheme.on(\"updated\"" in result) and (
-      trayFunc & "()" notin
-      result[
-        result.find("nativeTheme.on(\"updated\"") ..
-          result.find("nativeTheme.on(\"updated\"") + 200
-      ]
-    ):
-      echo "  [INFO] nativeTheme handler: tray call already absent"
     else:
-      echo &"  [FAIL] nativeTheme handler: could not remove {trayFunc}() call"
-      failed = true
+      var anchorPos = result.find("nativeTheme.on(\"updated\"")
+      if anchorPos < 0:
+        anchorPos = result.find("nativeTheme.on(`updated`")
+      if anchorPos >= 0 and
+          (trayFunc & "()") notin
+          result[anchorPos ..< min(anchorPos + 200, result.len)]:
+        echo "  [INFO] nativeTheme handler: tray call already absent"
+      else:
+        echo &"  [FAIL] nativeTheme handler: could not remove {trayFunc}() call"
+        failed = true
 
   if failed:
     raise

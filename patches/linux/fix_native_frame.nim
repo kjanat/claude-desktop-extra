@@ -58,7 +58,8 @@ proc apply*(input: string): string =
   #   electron  e.g. "cA" -- alias for require("electron"), used for
   #                          nativeTheme.shouldUseDarkColors.
   let bgFn = result.capture(
-    re2"""backgroundColor:([\w$]+)\(\),opacity:""", "backgroundColor function"
+    re2"""backgroundColor:([\w$]+(?:\.[\w$]+)?)\(\),opacity:""",
+    "backgroundColor function",
   )
   let electron = result.capture(
     re2"""([\w$]+)\.nativeTheme\.shouldUseDarkColors""", "electron alias"
@@ -77,7 +78,7 @@ proc apply*(input: string): string =
     ".nativeTheme.shouldUseDarkColors?\"#fff\":\"#000\",height:36}"
   var n = 0
   result = result.replace(
-    re2"""titleBarStyle:"hidden",titleBarOverlay:([\w$]+)""",
+    re2"""titleBarStyle:[`"]hidden[`"],titleBarOverlay:([\w$]+|!0|!1)""",
     proc(m: RegexMatch2, s: string): string =
       inc n
       "titleBarStyle:" & LINUX_NATIVE & "?\"default\":\"hidden\"," & "titleBarOverlay:(" &
@@ -137,7 +138,7 @@ proc apply*(input: string): string =
   # overlay matches the window background. Two occurrences: one per theme.
   n = 0
   result = result.replace(
-    re2"""(\{color:[\w$]+\?"#[0-9a-fA-F]+":)([\w$]+)(,symbolColor:)""",
+    re2"""(\{color:[\w$]+\?[`"]#[0-9a-fA-F]+[`"]:)([\w$]+)(,symbolColor:)""",
     proc(m: RegexMatch2, s: string): string =
       inc n
       let transparentVar = s[m.group(1)]

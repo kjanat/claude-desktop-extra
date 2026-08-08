@@ -43,7 +43,7 @@ proc apply*(input: string): string =
     # v1.19367.0 changed the window variable from a minified local (`it`) to a dotted
     # property path (`exports.mainWindow`), so winVar allows `.`-joined segments.
     let mainWinPattern =
-      nre.re"(function [\w$]+\([\w$]+\)\{return )([\w$]+(?:\.[\w$]+)*)=new ([\w$]+)\.BrowserWindow\(([\w$]+)\),(.*?)([\w$]+\(\2\.webContents,[\w$]+\.MAIN_WINDOW\))(.*?),\2\}"
+      nre.re"(function [\w$]+\([\w$]+\)\{return )([\w$]+(?:\.[\w$]+)*)=new ([\w$]+)\.BrowserWindow\(([\w$]+)\),(.*?)([\w$]+(?:\.[\w$]+)?\(\2\.webContents,[\w$]+(?:\.[\w$]+)?\.MAIN_WINDOW\))(.*?),\2\}"
 
     let m1 = result.find(mainWinPattern)
     if m1.isSome:

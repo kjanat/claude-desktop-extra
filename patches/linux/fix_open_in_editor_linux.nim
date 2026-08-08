@@ -18,12 +18,16 @@
 #   registered and nothing otherwise. xdg-utils ships xdg-mime on every supported
 #   distro (it is already a runtime dep for xdg-open, used by the launcher).
 #
-# WHAT THE 7 CALL SITES CONSUME (verified against the bundle):
-#   - isVSCodeInstalled():            return!!(X!=null&&X.path)            // truthiness only
-#   - openInVSCode()/openInEditor():  if(!(X!=null&&X.path))return!1; ... shell.openExternal("vscode://file/…")
-#                                                                          // .path only gates; the open is shell.openExternal
-#   - editor/Xcode detection:         o=!!(X!=null&&X.path)                // truthiness only
-#   - mailto/external link dialogs:   X.name (display) and X.icon.isEmpty()
+# WHAT THE CALL SITES CONSUME (verified against the bundle):
+#   - getInstalledEditors() loop:      truthiness of X?.path, over a shared
+#                                       {protocol,name} table (v1.25927.0
+#                                       folded isVSCodeInstalled/openInVSCode/
+#                                       openInEditor's old per-editor literal
+#                                       "vscode://" calls into this one loop)
+#   - openInEditor() action:           if(!(X?.path))return!1; ... opens via
+#                                       shell.openExternal("vscode://file/…")
+#   - mailto/external link dialogs:    X.name (display) and X.icon.isEmpty()
+#     (duplicated across 2 chunks by the bundler, so 2 static matches)
 #   So the shim must return {path:<truthy when registered>, name:<display>, icon:{isEmpty:()=>!0}}
 #   or null. We map .path/.name to the handler's .desktop name (path) and a
 #   prettified name, and stub the icon (we don't ship editor icons on Linux; the
@@ -78,12 +82,12 @@ proc apply*(input: string): string =
         let a = s[m.group(1)]
         LINUX_SHIM_HEAD & a & "):" & v & ".app.getApplicationInfoForProtocol(" & a & "))",
     )
-    # Expected sites (clean .deb bundle, 2026-06 build): 7
-    #   2× link-open dialogs (mailto/external): name+icon
-    #   3× "vscode://" literal: isVSCodeInstalled / openInVSCode / openInEditor
-    #   2× <table>.protocol: editor/Xcode detection
-    if count1 < 5:
-      echo &"  [FAIL] getApplicationInfoForProtocol shim: {count1} match(es), expected >= 5"
+    # Expected sites (v1.25927.0): 4
+    #   2× link-open dialogs (mailto/external, duplicated across chunks): name+icon
+    #   1× getInstalledEditors() detection loop over the {protocol,name} table
+    #   1× openInEditor() action gate
+    if count1 < 4:
+      echo &"  [FAIL] getApplicationInfoForProtocol shim: {count1} match(es), expected >= 4"
       raise newException(
         ValueError,
         "fix_open_in_editor_linux: too few getApplicationInfoForProtocol sites",
@@ -102,13 +106,13 @@ proc apply*(input: string): string =
   # Positively assert that exact guarded shape (not a loose substring that other
   # Linux patches could also produce) before accepting "already patched".
   let guardedPat =
-    re2"""&&process\.platform!=="linux"&&\([\w$]+=await [\w$]+\.app\.getFileIcon\([\w$]+\.path,\{size:"normal"\}\)\)"""
+    re2"""&&process\.platform!=="linux"&&\([\w$]+=await [\w$]+\.app\.getFileIcon\([\w$]+\.path,\{size:[`"]normal[`"]\}\)\)"""
   var gm: RegexMatch2
   if result.find(guardedPat, gm):
     echo "  [OK] getFileIcon Linux guard: already present (skipped)"
   else:
     let pattern2 =
-      re2"""\(!(\w+)\|\|(\w+)\.isEmpty\(\)\)&&\((\w+)=await (\w+)\.app\.getFileIcon\((\w+)\.path,\{size:"normal"\}\)\)"""
+      re2"""\(!(\w+)\|\|(\w+)\.isEmpty\(\)\)&&\((\w+)=await (\w+)\.app\.getFileIcon\((\w+)\.path,\{size:[`"]normal[`"]\}\)\)"""
     var count2 = 0
     result = result.replace(
       pattern2,

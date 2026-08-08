@@ -150,7 +150,7 @@ proc apply*(input: string): string =
   block:
     let regularJs = LINUX_EXECUTOR_JS.strip()
     let kwinJs = buildKwinLinuxExecutorInjection().strip()
-    let pat = re"""(app\.on\("ready",async\(\)=>\{)"""
+    let pat = re"""(app\.on\([`"]ready[`"],async\(\)=>\{)"""
     let n = replaceFirst(
       content,
       pat,
@@ -168,8 +168,8 @@ proc apply*(input: string): string =
 
   # ── Patch 2: add "linux" to the platform Set ───────────────────────────
   block:
-    let needle = """new Set(["darwin","win32"])"""
-    let repl = """new Set(["darwin","win32","linux"])"""
+    let needle = """new Set([`darwin`,`win32`])"""
+    let repl = """new Set([`darwin`,`win32`,`linux`])"""
     let n = replaceLiteralFirst(content, needle, repl)
     if n >= 1:
       echo &"  [OK] ese Set: added linux ({n} match)"
@@ -182,7 +182,7 @@ proc apply*(input: string): string =
   # ── Patch 4: createDarwinExecutor Linux fallback ───────────────────────
   block:
     let pat =
-      re"""(function [\w$]+\([\w$]+\)\{)if\(process\.platform!=="darwin"\)throw new Error"""
+      re"""(function [\w$]+\([\w$]+\)\{)if\(process\.platform!==[`"]darwin[`"]\)throw (?:new )?Error"""
     let n = replaceFirst(
       content,
       pat,
@@ -213,7 +213,7 @@ proc apply*(input: string): string =
     # the branch string exists somewhere, since Patch 4 injects an identical
     # string into createDarwinExecutor.
     let alreadyPat =
-      re"""platform==="linux"&&globalThis\.__linuxExecutor\)return globalThis\.__linuxExecutor;if\(process\.platform==="win32"\)return [\w$]+\(\),[\w$]+\([\w$]+\);if\(process\.platform==="darwin"\)return [\w$]+\([\w$]+\);throw new Error\(`computer-use executor not implemented"""
+      re"""platform==="linux"&&globalThis\.__linuxExecutor\)return globalThis\.__linuxExecutor;if\(process\.platform===[`"]win32[`"]\)return [\w$]+(?:\.[\w$]+)?\(\),[\w$]+(?:\.[\w$]+)?\([\w$]+\);if\(process\.platform===[`"]darwin[`"]\)return [\w$]+(?:\.[\w$]+)?\([\w$]+\);throw (?:new )?Error\(`computer-use executor not implemented"""
     if content.contains(alreadyPat):
       echo "  [OK] platform executor factory: linux branch already present at throw-site"
       inc patchesApplied
@@ -226,7 +226,7 @@ proc apply*(input: string): string =
       # contains a `.`, so it is `[\w$.]+` (NOT `[\w$]+`, which stops at the dot
       # and never reaches the closing `}` — a silent 0-match trap).
       let pat =
-        re"""(if\(process\.platform==="darwin"\)return [\w$]+\([\w$]+\);)(throw new Error\(`computer-use executor not implemented for \$\{[\w$.]+\}`\))"""
+        re"""(if\(process\.platform===[`"]darwin[`"]\)return [\w$]+(?:\.[\w$]+)?\([\w$]+\);)(throw (?:new )?Error\(`computer-use executor not implemented for \$\{[\w$.]+\}`\))"""
       let n = replaceFirst(
         content,
         pat,
@@ -255,7 +255,7 @@ proc apply*(input: string): string =
   # __setLockHeld(true) right before it.
   block:
     let pat =
-      re"""return this\.exclusiveHolder=([\w$]+),this\.emit\("cuLockChanged",\{holder:\1\}\),([\w$]+)\(\),!0"""
+      re"""return this\.exclusiveHolder=([\w$]+),this\.emit\([`"]cuLockChanged[`"],\{holder:\1\}\),([\w$]+(?:\.[\w$]+)?)\(\),!0"""
     let n = replaceFirst(
       content,
       pat,
@@ -278,7 +278,7 @@ proc apply*(input: string): string =
   # release-side emit is otherwise unchanged.
   block:
     let pat =
-      re"""this\.exclusiveHolder===([\w$]+)&&\(this\.exclusiveHolder=void 0,this\.emit\("cuLockChanged",\{holder:void 0\}\)\)"""
+      re"""this\.exclusiveHolder===([\w$]+)&&\(this\.exclusiveHolder=void 0,this\.emit\([`"]cuLockChanged[`"],\{holder:void 0\}\)\)"""
     let n = replaceFirst(
       content,
       pat,
@@ -332,30 +332,39 @@ proc apply*(input: string): string =
       # no longer matches. The screenshot-dims decl itself is unchanged and unique,
       # so anchor the async header, then lazily skip (up to 8000 chars) straight to
       # that decl — do not try to pin the exact prologue shape.
+      # The old null-check idiom `LAST||(DIMS=SRC.getLastScreenshotDims)==null?
+      # void 0:DIMS.call(SRC)` was rewritten with real optional chaining:
+      # `DIMS=LAST?void 0:SRC.getLastScreenshotDims?.()` — LAST's own truthiness
+      # now gates the fetch directly, and the enclosing async's tool-name param
+      # is no longer in scope at this anchor, so the toolName==="screenshot"
+      # half of the original condition is dropped; LAST is still checked for
+      # void 0 before consumers fall back to spreading DIMS, so the workaround
+      # keeps firing exactly when LAST is genuinely absent.
       let seedPat =
-        re"""async\(([\w$]+),[\w$]+\)=>\{[\s\S]{0,8000}?const ([\w$]+)=([\w$]+)\|\|\(([\w$]+)=([\w$]+)\.getLastScreenshotDims\)==null\?void 0:\4\.call\(\5\),([\w$]+)=new AbortController(?:,[\w$]+=setTimeout\(\(\)=>\6\.abort\(\),[\w$]+\))?,([\w$]+)=\{"""
+        re"""(let ([\w$]+)=([\w$]+)\?void 0:[\w$]+\.getLastScreenshotDims\?\.\(\),)([\w$]+)(=new AbortController)"""
       let maybeSeed = content.find(seedPat)
       if maybeSeed.isNone:
         echo "  [FAIL] screenshot intro note: wrapper seed anchor not found"
       else:
         let seed = maybeSeed.get()
-        let toolName = seed.captures[0]
+        let dimsDecl = seed.captures[0]
         let dimsVar = seed.captures[1]
         let lastVar = seed.captures[2]
+        let abortVar = seed.captures[3]
+        let abortRest = seed.captures[4]
         let injection =
-          ",linuxVisibleLastScreenshot=process.platform===\"linux\"&&" & lastVar &
-          "===void 0&&" & toolName & "===\"screenshot\"?void 0:" & lastVar & "??(" &
-          dimsVar & "?{..." & dimsVar & ",base64:\"\"}:void 0)"
-        # Python: split = seed_match.start(6) - 1 (index of comma before AbortController var)
-        # Group 6 in Python (1-indexed) is the AbortController var. In nre captures[5].
-        let abortBounds = seed.captureBounds[5]
-        let splitPoint = abortBounds.a - 1
-        content = content[0 ..< splitPoint] & injection & content[splitPoint ..^ 1]
+          "linuxVisibleLastScreenshot=process.platform===\"linux\"&&" & lastVar &
+          "===void 0?void 0:" & lastVar & "??(" & dimsVar & "?{..." & dimsVar &
+          ",base64:\"\"}:void 0),"
+        let bounds = seed.matchBounds
+        content =
+          content[0 ..< bounds.a] & dimsDecl & injection & abortVar & abortRest &
+          content[bounds.b + 1 ..^ 1]
         inc changes
 
         let lastScreenshotPat = re(
           "lastScreenshot:" & escapeRe(lastVar) & r"\?\?\(" & escapeRe(dimsVar) &
-            r"\?\{\.\.\." & escapeRe(dimsVar) & """,base64:""\}:void 0\),"""
+            r"\?\{\.\.\." & escapeRe(dimsVar) & """,base64:[`"][`"]\}:void 0\),"""
         )
         let lsCount = replaceFirst(
           content,
@@ -380,7 +389,7 @@ proc apply*(input: string): string =
     # ternary shape is unique to the computer-use tool object (siblings use
     # `e.sessionType==="ccd"` without paired call arms).
     let htcStart =
-      re"""(([\w$]+)=\{isEnabled:[\w$]+=>(?:[\w$]+\.sessionType==="ccd"\?[\w$]+(?:\.[\w$]+)?\(\):[\w$]+(?:\.[\w$]+)?\(\)|[\w$]+\(\)),handleToolCall:async\(([\w$]+),([\w$]+),([\w$]+)\)=>\{)"""
+      re"""(([\w$]+)=\{[\s\S]{0,100}?isEnabled:[\w$]+=>(?:[\w$]+\.sessionType===[`"]ccd[`"]\?[\w$]+(?:\.[\w$]+)?\(\):[\w$]+(?:\.[\w$]+)?\(\)|[\w$]+\(\)),handleToolCall:async\(([\w$]+),([\w$]+),([\w$]+)\)=>\{)"""
     let maybeHtc = content.find(htcStart)
     if maybeHtc.isNone:
       echo "  [FAIL] handleToolCall pattern: 0 matches"
@@ -394,7 +403,7 @@ proc apply*(input: string): string =
 
     let afterBrace = content[injectPos ..< min(injectPos + 2000, content.len)]
     let dispatcherPat = re(
-      "const [\\w$]+=([\\w$]+)\\(" & escapeRe(sessionParam) & """\),\{save_to_disk:"""
+      "(?:const|let) [\\w$]+=([\\w$]+)\\(" & escapeRe(sessionParam) & """\),\{save_to_disk:"""
     )
     let maybeDispatcher = afterBrace.find(dispatcherPat)
     if maybeDispatcher.isNone:
@@ -434,7 +443,7 @@ proc apply*(input: string): string =
         echo "  [OK] teach overlay controller: CU gate found after TCC stub (handled by Set fix)"
         inc patchesApplied
       elif beforeStub.find(
-        re"[\w$]+\(\)\?[\w$]+\([\w$]+\):[\w$]+\.for\([\w$]+\)\.setImplementation\(\{"
+        re"[\w$]+(?:\.[\w$]+)?\(\)\?[\w$]+\([\w$]+\):[\w$]+(?:\.[\w$]+)?\.for\([\w$]+\)\.setImplementation\(\{"
       ).isSome:
         echo "  [OK] teach overlay controller: CU gate found before TCC stub via ternary (handled by Set fix)"
         inc patchesApplied
@@ -459,8 +468,10 @@ proc apply*(input: string): string =
           let headerPat = re"""^function [\w$]+\(([\w$]+),([\w$]+)\)\{$"""
           let headerMatch = fnInfo.header.find(headerPat)
           let bodyOK =
-            fnInfo.body.contains(".on(\"teachModeChanged\"") and
-            fnInfo.body.contains(".on(\"teachStepRequested\"")
+            (fnInfo.body.contains(".on(\"teachModeChanged\"") or
+              fnInfo.body.contains(".on(`teachModeChanged`")) and
+            (fnInfo.body.contains(".on(\"teachStepRequested\"") or
+              fnInfo.body.contains(".on(`teachStepRequested`"))
           if headerMatch.isNone or not bodyOK:
             echo "  [FAIL] teach overlay controller init function shape: unexpected"
           else:
@@ -492,7 +503,9 @@ proc apply*(input: string): string =
           let fnInfo = fnInfoOpt.get
           let headerPat = re"""^function [\w$]+\(([\w$]+)\)\{$"""
           let headerMatch = fnInfo.header.find(headerPat)
-          let bodyOK = fnInfo.body.contains(".on(\"cuLockChanged\"")
+          let bodyOK =
+            fnInfo.body.contains(".on(\"cuLockChanged\"") or
+            fnInfo.body.contains(".on(`cuLockChanged`")
           if headerMatch.isNone or not bodyOK:
             echo "  [FAIL] cu side-panel controller init function shape: unexpected"
           else:
@@ -510,7 +523,7 @@ proc apply*(input: string): string =
   var overlayVar: string
   block:
     let overlayVarPat =
-      re"""([\w$]+)\.setAlwaysOnTop\(!0,"screen-saver"\),\1\.setFullScreenable\(!1\),\1\.setIgnoreMouseEvents\(!0,\{forward:!0\}\)"""
+      re"""([\w$]+)\.setAlwaysOnTop\(!0,[`"]screen-saver[`"]\),\1\.setFullScreenable\(!1\),\1\.setIgnoreMouseEvents\(!0,\{forward:!0\}\)"""
     let maybeOV = content.find(overlayVarPat)
     if maybeOV.isNone:
       echo "  [FAIL] teach overlay mouse: overlay variable pattern not found"
@@ -553,24 +566,47 @@ proc apply*(input: string): string =
     # ── Patch 9b: neutralize setIgnoreMouseEvents in SUn ─────────────────
     block:
       let ov = overlayVarOpt.get
-      let sunPat =
-        ov & ".setIgnoreMouseEvents(!0,{forward:!0})," & ov &
-        ".webContents.send(\"cu-teach:working\""
-      let sunRepl =
-        "(process.platform!==\"linux\"&&" & ov &
-        ".setIgnoreMouseEvents(!0,{forward:!0}))," & ov &
-        ".webContents.send(\"cu-teach:working\""
-      if replaceLiteralFirst(content, sunPat, sunRepl) == 1:
+      # The working-handler notify moved off raw webContents.send("cu-teach:working")
+      # onto a dispatcher abstraction: DISPATCHER.getDispatcher(ov.webContents)?.dispatchWorking().
+      # Try that shape first; fall back to the older literal IPC send for older bundles.
+      let sunPatNew = re(
+        escapeRe(ov) &
+          """\.setIgnoreMouseEvents\(!0,\{forward:!0\}\),([\w$]+\.getDispatcher\(""" &
+          escapeRe(ov) & """\.webContents\)\?\.dispatchWorking\(\))"""
+      )
+      var sunCount = 0
+      content = content.replace(
+        sunPatNew,
+        proc(m: RegexMatch): string =
+          inc sunCount
+          if sunCount > 1:
+            return m.match
+          "(process.platform!==\"linux\"&&" & ov & ".setIgnoreMouseEvents(!0,{forward:!0}))," &
+            m.captures[0],
+      )
+      if sunCount >= 1:
         echo "  [OK] teach overlay: neutralized setIgnoreMouseEvents in working handler (SUn) for Linux"
         inc changes
         inc patchesApplied
       else:
-        echo "  [FAIL] teach overlay: SUn pattern not found"
+        let sunPat =
+          ov & ".setIgnoreMouseEvents(!0,{forward:!0})," & ov &
+          ".webContents.send(\"cu-teach:working\""
+        let sunRepl =
+          "(process.platform!==\"linux\"&&" & ov &
+          ".setIgnoreMouseEvents(!0,{forward:!0}))," & ov &
+          ".webContents.send(\"cu-teach:working\""
+        if replaceLiteralFirst(content, sunPat, sunRepl) == 1:
+          echo "  [OK] teach overlay: neutralized setIgnoreMouseEvents in working handler (SUn) for Linux"
+          inc changes
+          inc patchesApplied
+        else:
+          echo "  [FAIL] teach overlay: SUn pattern not found"
 
   # ── Patch 8a (kwin-wayland): disable glow overlay ──────────────────────
   block:
     let pat =
-      re"""(function [\w$]+\(([\w$]+),([\w$]+)\)\{)([\w$]+)\.on\("cuLockChanged","""
+      re"""(function [\w$]+\(([\w$]+),([\w$]+)\)\{)([\w$]+(?:\.[\w$]+)?)\.on\([`"]cuLockChanged[`"],"""
     let n = replaceFirst(
       content,
       pat,
@@ -590,7 +626,7 @@ proc apply*(input: string): string =
   block:
     # Python walks ALL matches and picks the first whose 80-byte prefix contains "workArea".
     let pat =
-      re"""(=new [\w$]+\.BrowserWindow\(\{[^}]*?)transparent:!0([^}]*?)backgroundColor:"#00000000""""
+      re"""(=new [\w$]+\.BrowserWindow\(\{[^}]*?)transparent:!0([^}]*?)backgroundColor:[`"]#00000000[`"]"""
     var applied = false
     for m in content.findIter(pat):
       let matchStart = m.matchBounds.a
@@ -601,6 +637,10 @@ proc apply*(input: string): string =
         let old = content[bounds.a .. bounds.b]
         var newS = old
         newS = newS.replace("transparent:!0", "transparent:!globalThis.__isVM")
+        newS = newS.replace(
+          "backgroundColor:`#00000000`",
+          "backgroundColor:globalThis.__isVM?\"#000000\":\"#00000000\"",
+        )
         newS = newS.replace(
           "backgroundColor:\"#00000000\"",
           "backgroundColor:globalThis.__isVM?\"#000000\":\"#00000000\"",
@@ -674,6 +714,13 @@ proc apply*(input: string): string =
         re"""(function [\w$]+\(\)\{)return [\w$]+\.has\(process\.platform\)&&[\w$]+\(\)\}"""
       let patOld =
         re"""(function [\w$]+\(\)\{)return [\w$]+\([\w$]+\)\?[\w$]+\.has\(process\.platform\)&&[\w$]+\(\):[\w$]+\(\)\}"""
+      # Current shape: chicagoEnabled's own "wS"/"bue" split collapsed into one
+      # ternary gate: `return SET.has(process.platform)?FN()&&FLAG("chicagoEnabled"):!1`.
+      # Patch 12 below no longer finds a standalone flag-gated variant to
+      # delegate, and instead asserts this single gate is the one Patch 11
+      # already forces true on Linux.
+      let patTernaryChicago =
+        re"""(function [\w$]+\(\)\{)return [\w$]+(?:\.[\w$]+)?\.has\(process\.platform\)\?[\w$]+\(\)&&[\w$]+(?:\.[\w$]+)?\([`"]chicagoEnabled[`"]\):!1\}"""
       var n = replaceFirst(
         content,
         patV18286,
@@ -699,6 +746,17 @@ proc apply*(input: string): string =
         n = replaceFirst(
           content,
           patOld,
+          proc(m: RegexMatch): string =
+            let bounds = m.matchBounds
+            let whole = content[bounds.a .. bounds.b]
+            let headerLen = m.captures[0].len
+            m.captures[0] & "if(process.platform===\"linux\")return!0;" &
+              whole[headerLen ..^ 1],
+        )
+      if n == 0:
+        n = replaceFirst(
+          content,
+          patTernaryChicago,
           proc(m: RegexMatch): string =
             let bounds = m.matchBounds
             let whole = content[bounds.a .. bounds.b]
@@ -741,7 +799,7 @@ proc apply*(input: string): string =
         re"""(function [\w$]+\(\)\{)if\(!([\w$]+)\(([\w$]+)\)\)return ([\w$]+)\(\);const ([\w$]+)=([\w$]+)\(\);return \5!==void 0\?\5:([\w$]+)\.has\(process\.platform\)&&([\w$]+)\(\)\}"""
       # <=v1.17377 shape (standalone chicagoEnabled ternary), kept as fallback:
       let patOldChicago =
-        re"""(function [\w$]+\(\)\{)return [\w$]+\.has\(process\.platform\)\?[\w$]+\(\)&&([\w$]+)\("chicagoEnabled"\):!1\}"""
+        re"""(function [\w$]+\(\)\{)return [\w$]+(?:\.[\w$]+)?\.has\(process\.platform\)\?[\w$]+\(\)&&([\w$]+(?:\.[\w$]+)?)\([`"]chicagoEnabled[`"]\):!1\}"""
       var n = replaceFirst(
         content,
         patBue,
@@ -769,7 +827,21 @@ proc apply*(input: string): string =
         inc changes, n
         inc patchesApplied
       else:
-        echo "  [FAIL] rj pattern: 0 matches (computer-use tool calls may be blocked)"
+        # No standalone flag-gated "bue" variant left: wS/bue collapsed into
+        # the single chicagoEnabled ternary gate Patch 11 already forces true
+        # on Linux (patTernaryChicago there). Assert that positively - the
+        # patched end-state present, and no OTHER unpatched ternary gate of
+        # the same shape left unforced.
+        let patchedTernaryGate =
+          re"""function [\w$]+\(\)\{if\(process\.platform==="linux"\)return!0;return [\w$]+(?:\.[\w$]+)?\.has\(process\.platform\)\?"""
+        let unpatchedTernaryGate =
+          re"""function [\w$]+\(\)\{return [\w$]+(?:\.[\w$]+)?\.has\(process\.platform\)\?[\w$]+\(\)&&[\w$]+(?:\.[\w$]+)?\([`"]chicagoEnabled[`"]\):!1\}"""
+        if content.contains(patchedTernaryGate) and
+            not content.contains(unpatchedTernaryGate):
+          echo "  [OK] rj/bue: no standalone flag-gated variant left - merged into the single chicagoEnabled gate Patch 11 already forces true on Linux"
+          inc patchesApplied
+        else:
+          echo "  [FAIL] rj pattern: 0 matches (computer-use tool calls may be blocked)"
 
   # ─── Tool description patches ────────────────────────────────────────
   echo "  --- Tool description patches ---"
@@ -778,7 +850,7 @@ proc apply*(input: string): string =
   # 13a: Lf allowlist gate → empty on Linux
   block:
     let pat =
-      re"""([\w$]+)="The frontmost application must be in the session allowlist at the time of this call, or this tool returns an error and does nothing\.""""
+      re"""([\w$]+)=`The frontmost application must be in the session allowlist at the time of this call, or this tool returns an error and does nothing\.`"""
     let n = replaceFirst(
       content,
       pat,
@@ -795,7 +867,7 @@ proc apply*(input: string): string =
 
   # 13b: request_access macOS prefix → 3-way ternary
   block:
-    let old13b = """'This computer is running macOS. The file manager is "Finder". '"""
+    let old13b = """`This computer is running macOS. The file manager is "Finder". `"""
     let new13b =
       "(process.platform===\"linux\"?(globalThis.__cuKwinMode?" &
       "'This computer is running Linux with KDE Plasma. The file manager is \\\"Dolphin\\\". '" &
@@ -817,7 +889,7 @@ proc apply*(input: string): string =
   # 13b.kwin-alias: plasmashell alias in request_access
   block:
     let pat =
-      re"""(const ([\w$]+)=[\w$]+\.apps;if\(!Array\.isArray\(\2\)\|\|!\2\.every\(([\w$]+)=>typeof \3=="string"\)\)return [\w$]+\('"apps" must be an array of strings\.',"bad_args"\);const )([\w$]+)=\2(,[\w$]+=\{\};)"""
+      re"""((?:const|let) ([\w$]+)=[\w$]+\.apps;if\(!Array\.isArray\(\2\)\|\|!\2\.every\(([\w$]+)=>typeof \3==[`"]string[`"]\)\)return [\w$]+\(`"apps" must be an array of strings\.`,[`"]bad_args[`"]\);(?:const|let) )([\w$]+)=\2(,[\w$]+=\{\};)"""
     let n = replaceFirst(
       content,
       pat,
@@ -837,21 +909,39 @@ proc apply*(input: string): string =
       echo "  [FAIL] 13b.kwin-alias request_access alias: not found"
 
   # 13b.kwin-alias-teach: plasmashell alias in request_teach_access
+  #
+  # This site has no intermediate "mappedVar=appsVar" assignment (that shape
+  # is 13b.kwin-alias above, for request_access) - the validated apps array
+  # is passed straight into the teach-access resolver call:
+  #   let o=t.apps;if(...)return M(...);let{needDialog:s,...}=await Ft(e,o,r.allowedApps,...)
+  # Anchor on the shared validation head, capture the apps var name, then
+  # search forward (bounded window) for it as the 2nd argument of an
+  # `await FUNC(x,appsVar,` call and wrap just that argument.
   block:
-    let pat =
-      re"""(const ([\w$]+)=[\w$]+\.apps;if\(!Array\.isArray\(\2\)\|\|!\2\.every\(([\w$]+)=>typeof \3=="string"\)\)return [\w$]+\('"apps" must be an array of strings\.',"bad_args"\);const )([\w$]+)=\2(,\{needDialog:)"""
-    let n = replaceFirst(
-      content,
-      pat,
-      proc(m: RegexMatch): string =
-        let prefix = m.captures[0]
-        let appsVar = m.captures[1]
-        let mappedVar = m.captures[3]
-        let suffix = m.captures[4]
-        prefix & mappedVar & "=globalThis.__cuKwinMode?" & appsVar &
-          ".map(v=>v===\"org.kde.plasmashell\"?\"plasmashell\":v):" & appsVar & suffix,
-    )
-    if n >= 1:
+    let headPat =
+      re"""(?:const|let) ([\w$]+)=[\w$]+\.apps;if\(!Array\.isArray\(\1\)\|\|!\1\.every\(([\w$]+)=>typeof \2==[`"]string[`"]\)\)return [\w$]+\(`"apps" must be an array of strings\.`,[`"]bad_args[`"]\);"""
+    var done = false
+    for m in content.findIter(headPat):
+      let appsVar = m.captures[0]
+      let afterStart = m.matchBounds.b + 1
+      let windowEnd = min(afterStart + 150, content.len)
+      let window = content[afterStart ..< windowEnd]
+      let callPat =
+        re("""(await [\w$]+\([\w$]+,)(""" & escapeRe(appsVar) & """)(,)""")
+      let maybeCall = window.find(callPat)
+      if maybeCall.isSome:
+        let cm = maybeCall.get()
+        let absA = afterStart + cm.matchBounds.a
+        let absB = afterStart + cm.matchBounds.b
+        let callHead = cm.captures[0]
+        let callTail = cm.captures[2]
+        let replacement =
+          callHead & "globalThis.__cuKwinMode?" & appsVar &
+          ".map(v=>v===\"org.kde.plasmashell\"?\"plasmashell\":v):" & appsVar & callTail
+        content = content[0 ..< absA] & replacement & content[absB + 1 ..^ 1]
+        done = true
+        break
+    if done:
       echo "  [OK] 13b.kwin-alias-teach request_teach_access: plasmashell alias (kwin-wayland mode)"
       inc descChanges
       inc patchesApplied
@@ -863,7 +953,7 @@ proc apply*(input: string): string =
     let prefix =
       "`The desktop shell is frontmost. Double-click, right-click, and Enter on desktop items can launch applications outside the allowlist. To interact with the desktop, taskbar, Start menu, Search, or file manager, call request_access with exactly \"${"
     let suffix =
-      "===\"win32\"?\"File Explorer\":\"Finder\"}\" in the apps array \xe2\x80\x94 that single grant covers all of them. To interact with a different app, use open_application to bring it forward.`"
+      "===`win32`?`File Explorer`:`Finder`}\" in the apps array \xe2\x80\x94 that single grant covers all of them. To interact with a different app, use open_application to bring it forward.`"
     let pat = re(escapeRe(prefix) & "([\\w$]+)" & escapeRe(suffix))
     let maybeMatch = content.find(pat)
     if maybeMatch.isSome:
@@ -885,7 +975,7 @@ proc apply*(input: string): string =
   # 13b.kwin-shell-grant: shell grant predicate
   block:
     let pat =
-      re"""(function [\w$]+\(([\w$]+),([\w$]+)\)\{)return \3==="darwin"\?\2\.some\(([\w$]+)=>\4\.bundleId===([\w$]+)\):\2\.some\(([\w$]+)=>\6\.bundleId\.toLowerCase\(\)===([\w$]+)\)\}"""
+      re"""(function [\w$]+\(([\w$]+),([\w$]+)\)\{)return \3===[`"]darwin[`"]\?\2\.some\(([\w$]+)=>\4\.bundleId===([\w$]+)\):\2\.some\(([\w$]+)=>\6\.bundleId\.toLowerCase\(\)===([\w$]+)\)\}"""
     let n = replaceFirst(
       content,
       pat,
@@ -942,7 +1032,7 @@ proc apply*(input: string): string =
   # 13c: request_access apps — WM_CLASS for Linux
   block:
     let old13c =
-      """'Application display names (e.g. "Slack", "Calendar") or bundle identifiers (e.g. "com.tinyspeck.slackmacgap"). Display names are resolved case-insensitively against installed apps.'"""
+      """`Application display names (e.g. "Slack", "Calendar") or bundle identifiers (e.g. "com.tinyspeck.slackmacgap"). Display names are resolved case-insensitively against installed apps.`"""
     let new13c =
       "(process.platform===\"linux\"?" &
       "'Application names as shown in window titles, or WM_CLASS values " &
@@ -961,7 +1051,7 @@ proc apply*(input: string): string =
   # 13d: open_application app identifier
   block:
     let old13d =
-      """'Display name (e.g. "Slack") or bundle identifier (e.g. "com.tinyspeck.slackmacgap").'"""
+      """`Display name (e.g. "Slack") or bundle identifier (e.g. "com.tinyspeck.slackmacgap").`"""
     let new13d =
       "(process.platform===\"linux\"?" &
       "'Application name or WM_CLASS (e.g. \"firefox\", \"nautilus\").'" & ":" &
@@ -979,11 +1069,16 @@ proc apply*(input: string): string =
   # the ",inputSchema:" that follows the open_application tool description so it
   # hits the tool definition site, not the runtime error strings that reuse the
   # same sentence.
+  #
+  # The head of the description stays in the source and is a BACKTICK template
+  # literal since v1.25927.0, so the splice must close it with a backtick — a
+  # `"` closer leaves the literal running until the next backtick in the file
+  # (SyntaxError caught by node --check on the split-back chunk).
   block:
     let old13e =
-      "The target must already be in the session allowlist \xe2\x80\x94 call request_access first.\",inputSchema:"
+      "The target must already be in the session allowlist \xe2\x80\x94 call request_access first.`,inputSchema:"
     let new13e =
-      "\"+(process.platform===\"linux\"?" &
+      "`+(process.platform===\"linux\"?" &
       "\"On Linux, all applications are directly accessible.\"" & ":" &
       "\"The target must already be in the session allowlist " &
       "\xe2\x80\x94 call request_access first.\"),inputSchema:"
@@ -997,7 +1092,7 @@ proc apply*(input: string): string =
   # 13f: screenshot description — clean on Linux
   block:
     let old13f =
-      "\"Take a screenshot of the primary display. On this platform, screenshots are NOT filtered \xe2\x80\x94 all open windows are visible. Input actions targeting apps not in the session allowlist are rejected.\""
+      "`Take a screenshot of the primary display. On this platform, screenshots are NOT filtered \xe2\x80\x94 all open windows are visible. Input actions targeting apps not in the session allowlist are rejected.`"
     let new13f =
       "(process.platform===\"linux\"?" &
       "\"Take a screenshot of the primary display. All open windows are visible.\"" & ":" &
@@ -1014,7 +1109,7 @@ proc apply*(input: string): string =
   # 13g: screenshot suffix — no allowlist error on Linux
   block:
     let pat =
-      re"""([\w$]+)\+" Returns an error if the allowlist is empty\. The returned image is what subsequent click coordinates are relative to\.""""
+      re"""([\w$]+)\+` Returns an error if the allowlist is empty\. The returned image is what subsequent click coordinates are relative to\.`"""
     let n = replaceFirst(
       content,
       pat,
@@ -1076,7 +1171,7 @@ proc apply*(input: string): string =
 
   # 14c: File Explorer/Finder → 3-way (Dolphin/Files/Finder)
   block:
-    let fmOld = "\"File Explorer\":\"Finder\""
+    let fmOld = "`File Explorer`:`Finder`"
     let fmNew =
       "\"File Explorer\":process.platform===\"linux\"?(globalThis.__cuKwinMode?\"Dolphin\":\"Files\"):\"Finder\""
     if replaceLiteralFirst(content, fmOld, fmNew) == 1:

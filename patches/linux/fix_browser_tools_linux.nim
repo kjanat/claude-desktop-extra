@@ -74,7 +74,7 @@ proc apply*(input: string): string =
     # chrome-native-host artifacts path on the false branch to avoid matching an
     # unrelated isPackaged fn.
     let patternA =
-      re2"""(function [\w$]+\(\)\{)(const [\w$]+=[\w$]+;return [\w$]+\.app\.isPackaged\?[\w$]+\.join\(process\.resourcesPath,[\w$]+\):[\w$]+\.join\([\w$]+\.app\.getAppPath\(\),"\.\./\.\./packages/desktop/chrome-native-host/artifacts",)"""
+      re2"""(function [\w$]+\(\)\{)((?:const|let) [\w$]+=[\w$.]+;return [\w$]+\.app\.isPackaged\?[\w$]+(?:\.[\w$]+)?\.join\(process\.resourcesPath,[\w$]+\):[\w$]+(?:\.[\w$]+)?\.join\([\w$]+\.app\.getAppPath\(\),[`"]\.\./\.\./packages/desktop/chrome-native-host/artifacts[`"],)"""
     let linuxBinary =
       "if(process.platform===\"linux\")return require(\"path\").join(require(\"os\").homedir(),\".claude\",\"chrome\",\"chrome-native-host\");"
     var countA = result.replaceFirst(
@@ -105,7 +105,7 @@ proc apply*(input: string): string =
     # var name, then we rebuild the full 6-entry array and keep the original
     # Chrome+Edge entries.
     let patternBC =
-      re2"""(function [\w$]+\(\)\{[\w$]+\.homedir\(\);\{const )([\w$]+)(=[\w$]+\(\);return\[)(\{name:"Chrome",path:([\w$]+)\.join\([\w$]+,"google-chrome"\)\},\{name:"Edge",path:[\w$]+\.join\([\w$]+,"microsoft-edge"\)\})(\])"""
+      re2"""(function [\w$]+\(\)\{[\w$]+(?:\.[\w$]+)?\.homedir\(\);\{(?:const|let) )([\w$]+)(=[\w$]+\(\);return\[)(\{name:[`"]Chrome[`"],path:([\w$]+(?:\.[\w$]+)?)\.join\([\w$]+,[`"]google-chrome[`"]\)\},\{name:[`"]Edge[`"],path:[\w$]+(?:\.[\w$]+)?\.join\([\w$]+,[`"]microsoft-edge[`"]\)\})(\])"""
     var countBC = result.replaceFirst(
       patternBC,
       proc(m: RegexMatch2, s: string): string =
@@ -138,7 +138,7 @@ proc apply*(input: string): string =
     patchesApplied += 1
   else:
     let patternD =
-      re2"""(if\(process\.platform!=="darwin"\)return\{status:)([\w$]+)(\.Error,error:`Unsupported platform: \$\{process\.platform\}\. Only macOS is supported\.`\})"""
+      re2"""(if\(process\.platform!==[`"]darwin[`"]\)return\{status:)([\w$]+(?:\.[\w$]+)?)(\.Error,error:`Unsupported platform: \$\{process\.platform\}\. Only macOS is supported\.`\})"""
     var countD = result.replaceFirst(
       patternD,
       proc(m: RegexMatch2, s: string): string =
@@ -170,14 +170,14 @@ proc apply*(input: string): string =
 
   # ── Patch E: Chrome DevTools opener (still darwin/win32 only) ──────────────
   let alreadyE =
-    re2"""process\.platform==="linux"&&await [\w$]+\("xdg-open",\["chrome://inspect"\]\)"""
+    re2"""process\.platform===[`"]linux[`"]&&await [\w$]+(?:\.[\w$]+)?\([`"]xdg-open[`"],\[[`"]chrome://inspect[`"]\]\)"""
   var amE: RegexMatch2
   if result.find(alreadyE, amE):
     echo "  [OK] Chrome DevTools opener: already patched (skipped)"
     patchesApplied += 1
   else:
     let patternE =
-      re2"""(process\.platform==="win32"&&await )([\w$]+)(\("start",\["chrome","chrome://inspect"\]\))"""
+      re2"""(process\.platform===[`"]win32[`"]&&await )([\w$]+(?:\.[\w$]+)?)(\([`"]start[`"],\[[`"]chrome[`"],[`"]chrome://inspect[`"]\]\))"""
     var countE = result.replaceFirst(
       patternE,
       proc(m: RegexMatch2, s: string): string =

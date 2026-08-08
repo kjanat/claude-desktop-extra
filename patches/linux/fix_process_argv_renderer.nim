@@ -27,7 +27,7 @@ proc apply*(input: string): string =
 
   # Primary: insert <var>.argv=[] just before exposeInMainWorld("process",<var>)
   let exposePattern =
-    re2"""([\w$]+\.contextBridge\.exposeInMainWorld\("process",)([\w$]+)(\))"""
+    re2"""([\w$]+\.contextBridge\.exposeInMainWorld\([`"]process[`"],)([\w$]+)(\))"""
   var m: RegexMatch2
   if input.find(exposePattern, m):
     let varName = input[m.group(1)]

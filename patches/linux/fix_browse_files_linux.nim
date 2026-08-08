@@ -21,9 +21,9 @@ proc apply*(input: string): string =
   #
   # All tokens here are stable Electron/Node API names (no minified variables).
   let pattern =
-    re2"""process\.platform==="darwin"\?\["openFile","openDirectory","multiSelections"\]:\["openFile","multiSelections"\]"""
+    re2"""process\.platform===[`"]darwin[`"]\?\[[`"]openFile[`"],[`"]openDirectory[`"],[`"]multiSelections[`"]\]:\[[`"]openFile[`"],[`"]multiSelections[`"]\]"""
   let replacement =
-    """process.platform==="darwin"||process.platform==="linux"?["openFile","openDirectory","multiSelections"]:["openFile","multiSelections"]"""
+    """process.platform===`darwin`||process.platform===`linux`?[`openFile`,`openDirectory`,`multiSelections`]:[`openFile`,`multiSelections`]"""
 
   var count = 0
   result = input.replace(

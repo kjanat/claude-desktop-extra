@@ -17,7 +17,7 @@ proc apply*(input: string): string =
     echo &"  [INFO] {FOCUS_GLOBAL} already present -- skipped"
     return result
 
-  let pat = re2"([\w$]+)\.on\(""blur"",\(\)=>\{([\w$]+)\(null\)\}\)"
+  let pat = re2"([\w$]+)\.on\([`""]blur[`""],\(\)=>\{([\w$]+)\(null\)\}\)"
 
   var count = 0
   var resultStr = ""

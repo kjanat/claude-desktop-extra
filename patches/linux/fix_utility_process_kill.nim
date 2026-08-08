@@ -18,11 +18,14 @@ proc apply*(input: string): string =
   #   const a=(s=this.process)==null?void 0:s.kill();te.info(`Killing utiltiy proccess again
   # and (v1.11187.4, an intervening `r&&this.noteKillOnce(),` was inserted):
   #   const r=(n=this.process)==null?void 0:n.kill();r&&this.noteKillOnce(),D.info(`Killing utiltiy proccess again
+  # v1.25927.0 rewrote the null-check ternary as real optional chaining and
+  # `const` became `let`:
+  #   let t=this.process?.kill();t&&this.noteKillOnce(),r.o.info(`Killing utiltiy proccess again
   #
   # Group 3 tolerates any short run of statements between .kill() and the
   # `.info(\`Killing utiltiy proccess again` log call (e.g. noteKillOnce()).
   let pattern =
-    re2"""(const \w+=\(\w+=this\.process\)==null\?void 0:\w+)(\.kill\(\))(;[^`]{0,80}\.info\(`Killing utiltiy proccess again)"""
+    re2"""((?:const|let) \w+=(?:\(\w+=this\.process\)==null\?void 0:\w+|this\.process\?))(\.kill\(\))(;[^`]{0,80}\.info\(`Killing utiltiy proccess again)"""
   var count = 0
   result = input.replace(
     pattern,

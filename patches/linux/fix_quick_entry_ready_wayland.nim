@@ -17,16 +17,19 @@ import std/[os, options]
 import std/nre
 
 proc apply*(input: string): string =
-  # The Quick Entry show function waits for ready-to-show:
-  #   <VAR>||await(<VAR2>==null?void 0:<VAR2>.catch(<P>=>{<LOG>.error("Quick Entry: Error waiting for ready %o",{error:<P>})}))
+  # The Quick Entry show function waits for ready-to-show. Upstream had a
+  # null-check ternary here through v1.19367; v1.25927.0 rewrote it as real
+  # optional chaining, dropping the backreferenced re-use of the promise var:
+  #   <VAR>||await <VAR2>?.catch(<P>=>{<LOG>.error("Quick Entry: Error waiting for ready %o",{error:<P>})})
   # Variable names change every release (NEe/YEe, nK/AK, etc.) and so does the
-  # logger module (`S` in v1.13576). We must REUSE the upstream logger and catch
+  # logger module, which is now a dotted two-part accessor (e.g. `n.o`) rather
+  # than a bare identifier. We must REUSE the upstream logger and catch
   # param in the replacement -- hardcoding them (e.g. `R.error`) plants a latent
   # ReferenceError in the rejection branch even though the patch applies cleanly
   # and node --check passes. Capture both and emit them verbatim.
   # We wrap this in Promise.race with a 100ms timeout.
   let pat =
-    re"""([\w$]+)\|\|await\(([\w$]+)==null\?void 0:\2\.catch\(([\w$]+)=>\{([\w$]+)\.error\("Quick Entry: Error waiting for ready %o",\{error:\3\}\)\}\)\)"""
+    re"""([\w$]+)\|\|await ([\w$]+)\?\.catch\(([\w$]+)=>\{([\w$]+(?:\.[\w$]+)?)\.error\([`"]Quick Entry: Error waiting for ready %o[`"],\{error:\3\}\)\}\)"""
 
   let m = input.find(pat)
   if m.isSome:
@@ -36,10 +39,9 @@ proc apply*(input: string): string =
     let catchParam = match.captures[2]
     let logVar = match.captures[3]
     let newStr =
-      flagVar & "||await Promise.race([" & promiseVar & "==null?void 0:" & promiseVar &
-      ".catch(" & catchParam & "=>{" & logVar &
-      ".error(\"Quick Entry: Error waiting for ready %o\",{error:" & catchParam &
-      "})}),new Promise(_r=>setTimeout(_r,100))])"
+      flagVar & "||await Promise.race([" & promiseVar & "?.catch(" & catchParam &
+      "=>{" & logVar & ".error(\"Quick Entry: Error waiting for ready %o\",{error:" &
+      catchParam & "})}),new Promise(_r=>setTimeout(_r,100))])"
     result =
       input[0 ..< match.matchBounds.a] & newStr & input[match.matchBounds.b + 1 .. ^1]
     echo "  [OK] ready-to-show timeout (100ms) added (vars: " & flagVar & ", " &

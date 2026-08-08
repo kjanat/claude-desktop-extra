@@ -110,7 +110,7 @@ proc apply*(input: string): string =
   # Anchoring on `]:[` (the ternary's arm-array close + x64-array open) makes the
   # match unambiguous even though "/usr/share/OVMF/OVMF_CODE_4M.fd" is short.
   # group0 = `]:[`   group1 = `"/usr/share/OVMF/OVMF_CODE_4M.fd"`  (x64 first value)
-  let firmwarePattern = re2"""(\]:\[)("/usr/share/OVMF/OVMF_CODE_4M\.fd")"""
+  let firmwarePattern = re2"""(\]:\[)([`"]/usr/share/OVMF/OVMF_CODE_4M\.fd[`"])"""
   var countA = 0
   let alreadyFirmware =
     "/usr/share/edk2/x64/OVMF_CODE.4m.fd" in result and envFirmware & extraX64 in result
@@ -135,7 +135,8 @@ proc apply*(input: string): string =
   # group0 = `[`  group1 = `"/usr/libexec/virtiofsd",`  group2 = `"/usr/bin/virtiofsd"`
   # Env override goes FIRST (before the system paths), extras keep their old
   # position between the two Debian candidates.
-  let virtiofsdPattern = re2"""(\[)("/usr/libexec/virtiofsd",)("/usr/bin/virtiofsd")"""
+  let virtiofsdPattern =
+    re2"""(\[)([`"]/usr/libexec/virtiofsd[`"],)([`"]/usr/bin/virtiofsd[`"])"""
   var countB = 0
   let alreadyVirtiofsd =
     "/usr/lib/virtiofsd" in result and
@@ -160,7 +161,7 @@ proc apply*(input: string): string =
   # --- Patch C: env override for the arm64 AAVMF firmware array --------------
   # The arm64 arm needs no extra fixed paths (see above), but the env override
   # must reach it too. group0 = `?[`  group1 = `"/usr/share/AAVMF/AAVMF_CODE.fd"`
-  let aavmfPattern = re2"""(\?\[)("/usr/share/AAVMF/AAVMF_CODE\.fd")"""
+  let aavmfPattern = re2"""(\?\[)([`"]/usr/share/AAVMF/AAVMF_CODE\.fd[`"])"""
   var countC = 0
   let alreadyAavmf = envFirmware & "\"/usr/share/AAVMF/AAVMF_CODE.fd\"" in result
   if alreadyAavmf:

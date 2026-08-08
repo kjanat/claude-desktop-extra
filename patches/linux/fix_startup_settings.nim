@@ -55,11 +55,11 @@ proc apply*(input: string): string =
   let readDelegates =
     input.find(re2"""isStartupOnLoginEnabled\(\)\{return [\w$]+\(\)\}""", m1)
   let autostartDir = input.find(
-    re2"""XDG_CONFIG_HOME\|\|[\w$]+\.join\([\w$]+\.homedir\(\),"\.config"\);return [\w$]+\.join\([\w$]+,"autostart"\)""",
+    re2"""XDG_CONFIG_HOME\|\|[\w$]+(?:\.[\w$]+)?\.join\([\w$]+(?:\.[\w$]+)?\.homedir\(\),[`"]\.config[`"]\);return [\w$]+(?:\.[\w$]+)?\.join\([\w$]+,[`"]autostart[`"]\)""",
     m1,
   )
   let autostartFile = input.find(
-    re2"""return`\$\{[\w$]+\.basename\(process\.execPath\)\}\.desktop`""", m1
+    re2"""return`\$\{[\w$]+(?:\.[\w$]+)?\.basename\(process\.execPath\)\}\.desktop`""", m1
   )
   if readDelegates and autostartDir and autostartFile:
     echo "  [OK] isStartupOnLoginEnabled reads XDG autostart natively " &
@@ -76,7 +76,7 @@ proc apply*(input: string): string =
   # error log is the second positive anchor.
   var m2: RegexMatch2
   let desktopBuilder = input.find(
-    re2"""\[Desktop Entry\]","Type=Application",`Name=\$\{[\w$]+\.app\.getName\(\)\}`,`Exec=\$\{[\w$]+\(process\.execPath\)\} --startup`,"X-GNOME-Autostart-enabled=true"""",
+    re2"""[`"]\[Desktop Entry\][`"],[`"]Type=Application[`"],`Name=\$\{[\w$]+\.app\.getName\(\)\}`,`Exec=\$\{[\w$]+\(process\.execPath\)\} --startup`,[`"]X-GNOME-Autostart-enabled=true[`"]""",
     m2,
   )
   let writeErrLog = "Failed to update XDG autostart entry" in input
@@ -102,7 +102,7 @@ proc apply*(input: string): string =
     echo "  [INFO] GNOME session-restore detection: already patched (_b.mtimeMs present)"
     patchesApplied += 1
   else:
-    let pattern3 = re2"""([\w$]+)\.argv\.includes\("--startup"\)"""
+    let pattern3 = re2"""([\w$]+(?:\.[\w$]+)?)\.argv\.includes\([`"]--startup[`"]\)"""
     var count3 = 0
     result = input.replace(
       pattern3,

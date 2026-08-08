@@ -45,8 +45,13 @@ proc apply*(input: string): string =
 
   # Patch 1: Position function -- getPrimaryDisplay -> getDisplayNearestPoint
   # No backreference needed here
+  # Lookahead for a trailing comma (not `.id`/`;`) distinguishes the Quick
+  # Entry position function -- which destructures workAreaSize right after
+  # the call -- from an unrelated display-enumeration helper that also opens
+  # with `let e=<electronVar>.screen.getPrimaryDisplay()` but continues with
+  # `.id;` instead.
   let pattern1 =
-    re"(function [\w$]+\(\)\{const [\w$]+=)([\w$]+)(\.screen\.)getPrimaryDisplay\(\)"
+    re"(function [\w$]+\(\)\{(?:const|let) [\w$]+=)([\w$]+)(\.screen\.)getPrimaryDisplay\(\)(?=,)"
   var count1 = 0
   result = result.replace(
     pattern1,
@@ -89,7 +94,7 @@ proc apply*(input: string): string =
   # Patch 3: Override position-restore to always use cursor's display
   # No backreferences needed
   let pattern3 =
-    re"""(function [\w$]+\(\)\{const [\w$]+=[\w$]+\.get\("quickWindowPosition",null\),[\w$]+=[\w$]+\.screen\.getAllDisplays\(\);if\(!\()[\w$]+&&[\w$]+\.absolutePointInWorkspace&&[\w$]+\.monitor&&[\w$]+\.relativePointFromMonitor(\)\)return )([\w$]+)\(\)"""
+    re"""(function [\w$]+\(\)\{(?:const|let) [\w$]+=[\w$]+(?:\.[\w$]+)?\.get\([`"]quickWindowPosition[`"],null\),[\w$]+=[\w$]+\.screen\.getAllDisplays\(\);if\(!\()[\w$]+&&[\w$]+\.absolutePointInWorkspace&&[\w$]+\.monitor&&[\w$]+\.relativePointFromMonitor(\)\)return )([\w$]+)\(\)"""
   var count3 = 0
   result = result.replace(
     pattern3,

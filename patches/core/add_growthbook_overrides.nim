@@ -60,7 +60,7 @@ proc apply*(input: string): string =
     inc patchesApplied
   else:
     let setterPat = nre.re(
-      r"""(function [\w$]+\(([\w$]+)\)\{)(const [\w$]+=[\w$]+;[\w$]+=\2,[\w$]+=!0;const [\w$]+=Object\.keys\([\w$]+\)\.length[^"]{0,200}"\[growthbook\] loaded %d features \(%d changed\)")"""
+      r"""(function [\w$]+\(([\w$]+)\)\{)((?:const|let) [\w$]+=[\w$]+;[\w$]+=\2,[\w$]+=!0;(?:const|let) [\w$]+=Object\.keys\([\w$]+\)\.length[^`"]{0,200}[`"]\[growthbook\] loaded %d features \(%d changed\)[`"])"""
     )
     var hooked = 0
     let m = result.find(setterPat)

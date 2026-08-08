@@ -58,7 +58,7 @@ proc apply*(input: string): string =
 
   let stubJs = buildStubHandlersJs(eipcPrefix)
 
-  let pattern = re2"(app\.on\(""ready"",async\(\)=>\{)"
+  let pattern = re2"""(app\.on\([`"]ready[`"],async\(\)=>\{)"""
   var count = result.replaceFirst(
     pattern,
     proc(m: RegexMatch2, s: string): string =

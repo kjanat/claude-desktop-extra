@@ -40,8 +40,18 @@ proc apply*(input: string): string =
   # (minified, capture it) icon variable, anchored on the three case literals
   # so we pin the one correct site.
   # Variable names may contain $ (valid JS identifier), so use [\w$]+.
+  #
+  # v1.25927.0 changes: the icon var is no longer the sole declaration --
+  # it now sits after an unrelated initialized var in the same `let`
+  # (`let e=b.n(...),t;switch(...)`), so we lazily skip any leading
+  # declarations up to the last bare (uninitialized) one before `;switch(`.
+  # The switch discriminant is build-time-constant-folded to a literal
+  # string rather than a variable, and every string literal in this block
+  # (case labels + icon filenames + "gnome") shifted from double-quoted to
+  # backtick-quoted, so both are tolerated everywhere below. The gnome-check
+  # function is now a dotted call (e.g. `m.qi()`) instead of bare.
   let pattern =
-    re"""let ([\w$]+);switch\([\w$]+\)\{case"ico":\1=[\w$]+\.nativeTheme\.shouldUseDarkColors\?"Tray-Win32-Dark\.ico":"Tray-Win32\.ico";break;case"template-image":\1="TrayIconTemplate\.png";break;case"png":\1=[\w$]+\(\)==="gnome"\|\|[\w$]+\.nativeTheme\.shouldUseDarkColors\?"TrayIconLinux-Dark\.png":"TrayIconLinux\.png";break\}"""
+    re"""let (?:[^;]+?,)?([\w$]+);switch\([^)]+\)\{case[`"]ico[`"]:\1=[\w$]+\.nativeTheme\.shouldUseDarkColors\?[`"]Tray-Win32-Dark\.ico[`"]:[`"]Tray-Win32\.ico[`"];break;case[`"]template-image[`"]:\1=[`"]TrayIconTemplate\.png[`"];break;case[`"]png[`"]:\1=[\w$]+(?:\.[\w$]+)?\(\)===[`"]gnome[`"]\|\|[\w$]+\.nativeTheme\.shouldUseDarkColors\?[`"]TrayIconLinux-Dark\.png[`"]:[`"]TrayIconLinux\.png[`"];break\}"""
   var count = 0
   result = input.replace(
     pattern,

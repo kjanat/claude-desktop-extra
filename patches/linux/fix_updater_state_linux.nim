@@ -18,15 +18,14 @@ import regex
 
 proc apply*(input: string): string =
   # Check if already patched
-  let already =
-    re2"""case"idle":return\{status:[\w$]+\.[\w$]+,version:"",versionNumber:""\}"""
+  let already = re2"""case[`"]idle[`"]:return\{status:[\w$]+(?:\.[\w$]+)+,version:"",versionNumber:""\}"""
   if input.contains(already):
     echo "  [OK] Updater idle state: already patched (skipped)"
     return input
 
   # Pattern: case"idle":return{status:<var>.Idle}
   # We need to add version:"",versionNumber:"" before the closing brace.
-  let pattern = re2"""(case"idle":return\{status:[\w$]+\.[\w$]+)\}"""
+  let pattern = re2"""(case[`"]idle[`"]:return\{status:[\w$]+(?:\.[\w$]+)+)\}"""
   var count = 0
   result = input.replace(
     pattern,

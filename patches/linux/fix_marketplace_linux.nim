@@ -22,8 +22,10 @@ proc apply*(input: string): string =
     echo "  [SKIP] A already patched"
     inc patchesApplied
   else:
+    # v1.25927.0 rewrote the null-check ternary as real optional chaining:
+    # function $(e){return e?.mode==="ccd"} (previously: return(A==null?void 0:A.mode)==="ccd").
     let m = result.find(
-      re"""function ([\w$]+)\(([\w$]+)\)\{return\((\2)==null\?void 0:\3\.mode\)==="ccd"\}"""
+      re"""function ([\w$]+)\(([\w$]+)\)\{return \2\?\.mode===[`"]ccd[`"]\}"""
     )
     if m.isSome:
       let c = m.get.captures
@@ -45,11 +47,11 @@ proc apply*(input: string): string =
   else:
     # Try new pattern (v1.8089+): if(X.scope==="user")return this.entryToPluginInfo(A,X,B,C);
     let mNew = result.find(
-      re"""if\(([\w$]+)\.scope===\"user\"\)return this\.entryToPluginInfo\(([\w$]+),\1,([\w$]+),([\w$]+)\);"""
+      re"""if\(([\w$]+)\.scope===[`"]user[`"]\)return this\.entryToPluginInfo\(([\w$]+),\1,([\w$]+),([\w$]+)\);"""
     )
     # Try old pattern: if(X.scope==="user"){Y.push(this.entryToPluginInfo(A,X,B,C));continue}
     let mOld = result.find(
-      re"""if\(([\w$]+)\.scope===\"user\"\)\{([\w$]+)\.push\(this\.entryToPluginInfo\(([\w$]+),\1,([\w$]+),([\w$]+)\)\);continue\}"""
+      re"""if\(([\w$]+)\.scope===[`"]user[`"]\)\{([\w$]+)\.push\(this\.entryToPluginInfo\(([\w$]+),\1,([\w$]+),([\w$]+)\)\);continue\}"""
     )
     if mNew.isSome:
       let c = mNew.get.captures

@@ -60,7 +60,8 @@ proc apply*(input: string): string =
   # Idempotency: positive end-state check -- the widened allowlist INCLUDING
   # KDE_SESSION_VERSION must be present (an older widened list without it must
   # NOT count as patched, or KDE stays broken).
-  if "\"USER\",\"DISPLAY\",\"WAYLAND_DISPLAY\"" in input and
+  if ("\"USER\",\"DISPLAY\",\"WAYLAND_DISPLAY\"" in input or
+      "`USER`,\"DISPLAY\",\"WAYLAND_DISPLAY\"" in input) and
       "\"KDE_SESSION_VERSION\"" in input:
     echo "  [OK] built-in MCP browser env: already patched"
     return input
@@ -69,7 +70,8 @@ proc apply*(input: string): string =
   # NOT minified, so this literal is stable across versions. Capture group 0 is
   # the array body up to (but not including) the closing bracket, so we can
   # append the extra vars before re-adding "]".
-  let pattern = re2"(\[""HOME"",""LOGNAME"",""PATH"",""SHELL"",""TERM"",""USER"")\]"
+  let pattern =
+    re2"""(\[[`"]HOME[`"],[`"]LOGNAME[`"],[`"]PATH[`"],[`"]SHELL[`"],[`"]TERM[`"],[`"]USER[`"])\]"""
   var count = 0
   result = input.replace(
     pattern,
