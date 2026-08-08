@@ -45,7 +45,11 @@ proc apply*(input: string): string =
   # (closing quote + `,a)...`) stays in the source after the match, and since
   # v1.25927.0 it is a backtick — re-emitting a hardcoded `"` there leaves the
   # literal unterminated (SyntaxError caught by node --check on index.js).
-  let pattern = re2"""\.on\([`"]render-process-gone[`"],async\(([\w$]+),([\w$]+)\)=>\{if\(([\w$]+)\(([\w$]+)\)&&!\(([\w$]+)\.reason===[`"]killed[`"]&&\(await new Promise\([\w$]+=>setTimeout\([\w$]+,([\w$]+)\)\),([\w$]+)\.isDestroyed\(\)\|\|([\w$]+)\.li\(\)\)\)&&!([\w$]+)\.isDestroyed\(\)\)\{if\(([\w$]+(?:\.[\w$]+)?)\.info\(([`"])Main webview render process gone: %o"""
+  # The second disjunct of the killed-guard is a niladic session-state call
+  # whose method name re-minifies per release (m.li() in v1.25927, p.t() in
+  # v1.26832), so the whole call is captured as one group and re-emitted
+  # verbatim rather than matching a fixed method name.
+  let pattern = re2"""\.on\([`"]render-process-gone[`"],async\(([\w$]+),([\w$]+)\)=>\{if\(([\w$]+)\(([\w$]+)\)&&!\(([\w$]+)\.reason===[`"]killed[`"]&&\(await new Promise\([\w$]+=>setTimeout\([\w$]+,([\w$]+)\)\),([\w$]+)\.isDestroyed\(\)\|\|([\w$]+\.[\w$]+\(\))\)\)&&!([\w$]+)\.isDestroyed\(\)\)\{if\(([\w$]+(?:\.[\w$]+)?)\.info\(([`"])Main webview render process gone: %o"""
   var count = 0
   result = input.replace(
     pattern,
@@ -57,7 +61,7 @@ proc apply*(input: string): string =
       let details3 = s[m.group(4)]
       let timeoutVar = s[m.group(5)]
       let winVar1 = s[m.group(6)]
-      let liOwner = s[m.group(7)]
+      let sessionCheckCall = s[m.group(7)]
       let winVar2 = s[m.group(8)]
       let logger = s[m.group(9)]
       let msgQuote = s[m.group(10)]
@@ -71,7 +75,7 @@ proc apply*(input: string): string =
       ".on(\"render-process-gone\",async(" & evtParam & "," & details1 & ")=>{" &
         injected & "if(" & predicateFn & "(" & details1 & ")&&!(" & details1 &
         """.reason==="killed"&&(await new Promise(_qr=>setTimeout(_qr,""" & timeoutVar &
-        "))," & winVar1 & ".isDestroyed()||" & liOwner & ".li()))&&!" & winVar1 &
+        "))," & winVar1 & ".isDestroyed()||" & sessionCheckCall & "))&&!" & winVar1 &
         ".isDestroyed()){if(" & logger & ".info(" & msgQuote &
         "Main webview render process gone: %o",
   )

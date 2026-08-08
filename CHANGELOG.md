@@ -4,9 +4,9 @@ All notable changes to the claude-desktop-extra packages will be documented in t
 
 ## 2026-08-09
 
-### Patches re-validated for Claude Desktop v1.25927.0
+### Patches re-validated for Claude Desktop v1.25927.0 / v1.26832.0
 
-Upstream's v1.25927.0 re-minify broke most patches at once. Two things changed structurally: the bundle now has a **second code-split chunk group** (`index2.chunk-*.js`, 130 files) that the patch orchestrator and the validation script did not stage, so patches saw an incomplete bundle; and the minifier switched most double-quoted string literals to backtick template literals, alongside scattered `const`→`let`, optional-chaining, and dotted-namespace shifts.
+Upstream's v1.25927.0 re-minify broke most patches at once. (v1.26832.0 shipped before the fixed release could build; it keeps the same bundle shape, and one more patch anchor - the renderer-death guard's session-state call - needed a per-release-name tolerance for it.) Two things changed structurally: the bundle now has a **second code-split chunk group** (`index2.chunk-*.js`, 130 files) that the patch orchestrator and the validation script did not stage, so patches saw an incomplete bundle; and the minifier switched most double-quoted string literals to backtick template literals, alongside scattered `const`→`let`, optional-chaining, and dotted-namespace shifts.
 
 The orchestrator and `validate-patches.sh` now stage every `index*.chunk-*.js` group, and every affected patch pattern tolerates both quote styles. A handful of patches needed real rewrites for upstream refactors: the suppressed renderer-death log now fires unconditionally on `reason==="killed"` (the separate silent branch it used to hook is gone), open-in-editor's detection collapsed from seven per-editor call sites into one shared loop, and the tray-icon override follows the icon variable into a shared `let` declaration.
 

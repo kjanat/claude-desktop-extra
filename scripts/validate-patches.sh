@@ -162,8 +162,11 @@ for patch_file in "$PATCHES_DIR"/*/*.nim "$PATCHES_DIR"/*/*.js; do
 			cp "$actual_target" "$tmp_file"
 		fi
 
-		output=$("$nim_bin" "$tmp_file" 2>&1)
-		result=$?
+		# Same `&& ||` idiom as the nim-dir branch below: under `set -e` a bare
+		# failing command-substitution assignment terminates the whole script,
+		# so a single failing patch would cut the report short instead of being
+		# counted as FAIL.
+		output=$("$nim_bin" "$tmp_file" 2>&1) && result=0 || result=$?
 		echo "$output" | sed 's/^/  /'
 		if [ $result -eq 0 ]; then
 			echo "  Status: PASS"
