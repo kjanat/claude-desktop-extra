@@ -107,7 +107,7 @@ jobs:
         env:
           DEB_VERSION_INPUT: ${{ github.event.inputs.deb_version }}
         run: |
-          if [ -n "${DEB_VERSION_INPUT}" ]; then
+          if [[ -n "${DEB_VERSION_INPUT}" ]]; then
             # Caller pinned an explicit version (auto-PR dispatch from
             # version-check.yml). Trust it but confirm the apt repo has it.
             VERSION="${DEB_VERSION_INPUT}"
@@ -116,7 +116,7 @@ jobs:
             VERSION=$(bash .github/scripts/apt-fetch-verify.sh poll)
             echo "Highest available upstream version (apt): ${VERSION}"
           fi
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Download & GPG/SHA-verify official .deb (amd64 + arm64)
         id: deb
@@ -128,14 +128,15 @@ jobs:
           # Packages index against it, downloads each arch's .deb, and verifies
           # its SHA256 against the signed Packages entry.
           for arch in amd64 arm64; do
-            DEB=$(bash .github/scripts/apt-fetch-verify.sh download "$arch" deb-artifacts)
+            DEB=$(bash .github/scripts/apt-fetch-verify.sh download "${arch}" deb-artifacts)
             META="deb-artifacts/claude-desktop_${arch}.meta"
-            # shellcheck disable=SC1090
-            source "$META"
-            echo "Resolved ${arch}: v${VERSION} -> $(basename "$DEB")"
+            # shellcheck source=/dev/null
+            source "${META}"
+            DEB_BASENAME=$(basename "${DEB}")
+            echo "Resolved ${arch}: v${VERSION} -> ${DEB_BASENAME}"
             # Guard: the arch we downloaded must match the version we intend to
             # build, so amd64 and arm64 never diverge in a single release.
-            if [ -n "${WANT_VERSION}" ] && [ "${VERSION}" != "${WANT_VERSION}" ]; then
+            if [[ -n "${WANT_VERSION}" && "${VERSION}" != "${WANT_VERSION}" ]]; then
               echo "::error::${arch} apt highest (${VERSION}) != intended version (${WANT_VERSION})"
               exit 1
             fi
@@ -150,23 +151,27 @@ jobs:
         run: |
           OWNER="${GITHUB_REPOSITORY%%/*}"
           NAME="${GITHUB_REPOSITORY#*/}"
-          RELEASE_STATE=$(gh api graphql \
-            -f owner="$OWNER" \
-            -f name="$NAME" \
-            -f query='query($owner: String!, $name: String!) {
-              repository(owner: $owner, name: $name) {
-                releases(first: 100, orderBy: {field: CREATED_AT, direction: DESC}) {
-                  nodes { tagName isPrerelease isDraft }
-                }
+          GRAPHQL_QUERY=$(cat <<'GRAPHQL'
+          query($owner: String!, $name: String!) {
+            repository(owner: $owner, name: $name) {
+              releases(first: 100, orderBy: {field: CREATED_AT, direction: DESC}) {
+                nodes { tagName isPrerelease isDraft }
               }
-            }') || {
+            }
+          }
+          GRAPHQL
+          )
+          RELEASE_STATE=$(gh api graphql \
+            -f owner="${OWNER}" \
+            -f name="${NAME}" \
+            -f query="${GRAPHQL_QUERY}") || {
             echo "::error::Failed to fetch releases from GitHub API (rate limit or auth issue)"
             exit 1
           }
-          RELEASES_JSON=$(jq -c '.data.repository.releases.nodes' <<< "$RELEASE_STATE")
-          printf 'RELEASES_JSON=%s\n' "$RELEASES_JSON" >> "$GITHUB_ENV"
+          RELEASES_JSON=$(jq -c '.data.repository.releases.nodes' <<< "${RELEASE_STATE}")
+          printf 'RELEASES_JSON=%s\n' "${RELEASES_JSON}" >> "${GITHUB_ENV}"
 
-          HIGHEST_VERSION=$(echo "$RELEASES_JSON" | python3 -c "
+          HIGHEST_VERSION=$(echo "${RELEASES_JSON}" | python3 -c "
           import sys, json
           releases = json.load(sys.stdin)
           versions = []
@@ -187,22 +192,22 @@ jobs:
               print('')
           ")
 
-          if [ -z "$HIGHEST_VERSION" ]; then
+          if [[ -z "${HIGHEST_VERSION}" ]]; then
             echo "No published release yet — treating ${CURRENT_VERSION} as new"
-            echo "highest_version=" >> $GITHUB_OUTPUT
-            echo "needs_update=true" >> $GITHUB_OUTPUT
+            echo "highest_version=" >> "${GITHUB_OUTPUT}"
+            echo "needs_update=true" >> "${GITHUB_OUTPUT}"
             exit 0
           fi
 
           echo "Highest released version: ${HIGHEST_VERSION}"
           echo "Current version: ${CURRENT_VERSION}"
-          echo "highest_version=${HIGHEST_VERSION}" >> $GITHUB_OUTPUT
+          echo "highest_version=${HIGHEST_VERSION}" >> "${GITHUB_OUTPUT}"
 
-          if [ "$HIGHEST_VERSION" != "${CURRENT_VERSION}" ]; then
-            echo "needs_update=true" >> $GITHUB_OUTPUT
+          if [[ "${HIGHEST_VERSION}" != "${CURRENT_VERSION}" ]]; then
+            echo "needs_update=true" >> "${GITHUB_OUTPUT}"
             echo "Version changed from ${HIGHEST_VERSION} to ${CURRENT_VERSION}"
           else
-            echo "needs_update=false" >> $GITHUB_OUTPUT
+            echo "needs_update=false" >> "${GITHUB_OUTPUT}"
             echo "Version unchanged"
           fi
 
@@ -215,10 +220,10 @@ jobs:
           NEEDS_UPDATE: ${{ steps.check.outputs.needs_update }}
           HIGHEST_VERSION: ${{ steps.check.outputs.highest_version }}
         run: |
-          if [ "$FORCE" == "true" ] && [ "$NEEDS_UPDATE" != "true" ]; then
+          if [[ "${FORCE}" == "true" && "${NEEDS_UPDATE}" != "true" ]]; then
             RELEASE_COUNT=$(jq \
               "[.[] | select(.tagName | test(\"^v${VERSION}(-[0-9]+)?$\"))] | length" \
-              <<< "$RELEASES_JSON")
+              <<< "${RELEASES_JSON}")
             PKGREL=$((RELEASE_COUNT + 1))
           else
             PKGREL=1
@@ -227,38 +232,40 @@ jobs:
           # Pick a free tag. Probe releases, partial re-runs, and concurrent
           # dispatch can already own v${VERSION} or v${VERSION}-N.
           REMOTE_TAGS="${RUNNER_TEMP}/github-remote-tags"
-          git ls-remote --tags origin > "$REMOTE_TAGS"
+          git ls-remote --tags origin > "${REMOTE_TAGS}"
           while true; do
-            if [ "$PKGREL" -gt 1 ]; then
+            if [[ "${PKGREL}" -gt 1 ]]; then
               TAG="v${VERSION}-${PKGREL}"
               RELEASE_NAME="Claude Desktop ${VERSION} (patch release ${PKGREL})"
             else
               TAG="v${VERSION}"
               RELEASE_NAME="Claude Desktop ${VERSION}"
             fi
-            RELEASE_EXISTS=$(jq --arg tag "$TAG" 'any(.[]; .tagName == $tag)' <<< "$RELEASES_JSON")
+            RELEASE_EXISTS=$(jq --arg tag "${TAG}" 'any(.[]; .tagName == $tag)' <<< "${RELEASES_JSON}")
             TAG_EXISTS=$(awk -v ref="refs/tags/${TAG}" \
               '$2 == ref { found = 1 } END { print found ? "true" : "false" }' \
-              "$REMOTE_TAGS")
+              "${REMOTE_TAGS}")
 
-            if [ "$RELEASE_EXISTS" = "false" ] && [ "$TAG_EXISTS" = "false" ]; then
+            if [[ "${RELEASE_EXISTS}" = "false" && "${TAG_EXISTS}" = "false" ]]; then
               break
             fi
             echo "Release ${TAG} already exists — bumping pkgrel"
             PKGREL=$((PKGREL + 1))
           done
 
-          if [ "$VERSION" = "$HIGHEST_VERSION" ] || [ "$NEEDS_UPDATE" = "true" ]; then
+          if [[ "${VERSION}" = "${HIGHEST_VERSION}" || "${NEEDS_UPDATE}" = "true" ]]; then
             MAKE_LATEST="true"
           else
             MAKE_LATEST="false"
             echo "::warning::Building v${VERSION} but v${HIGHEST_VERSION} is higher — will NOT mark as Latest"
           fi
 
-          echo "pkgrel=${PKGREL}" >> "$GITHUB_OUTPUT"
-          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "release_name=${RELEASE_NAME}" >> "$GITHUB_OUTPUT"
-          echo "make_latest=${MAKE_LATEST}" >> "$GITHUB_OUTPUT"
+          cat >> "${GITHUB_OUTPUT}" <<EOF
+          pkgrel=${PKGREL}
+          tag=${TAG}
+          release_name=${RELEASE_NAME}
+          make_latest=${MAKE_LATEST}
+          EOF
           echo "Package release: pkgrel=${PKGREL}, Tag: ${TAG}, Latest: ${MAKE_LATEST}"
 
       - name: Extract changelog for this release
@@ -267,9 +274,11 @@ jobs:
         env: { VERSION: "${{ steps.version.outputs.version }}" }
         run: |
           CHANGELOG_URL="https://github.com/${GITHUB_REPOSITORY}/blob/master/CHANGELOG.md"
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if ! LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null); then
+            LAST_TAG=""
+          fi
 
-          if [ -n "$LAST_TAG" ] && git diff --quiet "$LAST_TAG" -- CHANGELOG.md; then
+          if [[ -n "${LAST_TAG}" ]] && git diff --quiet "${LAST_TAG}" -- CHANGELOG.md; then
             # Automated upstream bump: CHANGELOG.md is untouched since the last
             # release, so its top section describes an older release. Emit an
             # accurate generic note instead of stale history.
@@ -284,42 +293,46 @@ jobs:
               }
               found { print }
             ' CHANGELOG.md | sed '/^$/N;/^\n$/d')
-            if [ -n "$CHANGELOG" ] && [ -n "$SECTION_DATE" ]; then
-              CHANGELOG=$(printf '_From [CHANGELOG.md](%s), %s:_\n\n%s' "$CHANGELOG_URL" "$SECTION_DATE" "$CHANGELOG")
+            if [[ -n "${CHANGELOG}" && -n "${SECTION_DATE}" ]]; then
+              CHANGELOG=$(printf '_From [CHANGELOG.md](%s), %s:_\n\n%s' "${CHANGELOG_URL}" "${SECTION_DATE}" "${CHANGELOG}")
             fi
           fi
 
-          if [ -z "$CHANGELOG" ]; then
-            if [ -n "$LAST_TAG" ]; then
+          if [[ -z "${CHANGELOG}" ]]; then
+            if [[ -n "${LAST_TAG}" ]]; then
               CHANGELOG=$(git log "${LAST_TAG}..HEAD" --format="- %s" --no-merges --reverse)
             else
               CHANGELOG="No changes since last release."
             fi
           fi
 
-          echo "content<<EOF" >> $GITHUB_OUTPUT
-          echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          {
+            echo "content<<EOF"
+            echo "${CHANGELOG}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Decide if build should proceed
         id: decide
         run: |
-          if [ "${{ github.event_name }}" == "pull_request" ] || \
-             [ "${{ steps.check.outputs.needs_update }}" == "true" ] || \
-             [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "should_build=true" >> $GITHUB_OUTPUT
+          if [[ "${{ github.event_name }}" == "pull_request" ]] || \
+             [[ "${{ steps.check.outputs.needs_update }}" == "true" ]] || \
+             [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "should_build=true" >> "${GITHUB_OUTPUT}"
           else
-            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "should_build=false" >> "${GITHUB_OUTPUT}"
           fi
 
       - name: Set defaults for PR builds
         id: pr-defaults
         if: github.event_name == 'pull_request'
         run: |
-          echo "pkgrel=1" >> $GITHUB_OUTPUT
-          echo "tag=v${{ steps.version.outputs.version }}-pr" >> $GITHUB_OUTPUT
-          echo "release_name=PR Validation" >> $GITHUB_OUTPUT
-          echo "make_latest=false" >> $GITHUB_OUTPUT
+          {
+            echo "pkgrel=1"
+            echo "tag=v${{ steps.version.outputs.version }}-pr"
+            echo "release_name=PR Validation"
+            echo "make_latest=false"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Upload amd64 .deb for build job
         if: steps.decide.outputs.should_build == 'true'
@@ -357,13 +370,13 @@ jobs:
           echo "=== Running shellcheck on shell scripts ==="
           FAILED=false
           for f in scripts/*.sh packaging/apt/*.sh packaging/rpm/*.sh packaging/pacman/*.sh .github/scripts/*.sh; do
-            [ -f "$f" ] || continue
-            echo "Checking $f..."
-            if ! shellcheck -S error "$f"; then
+            [[ -f "${f}" ]] || continue
+            echo "Checking ${f}..."
+            if ! shellcheck -S error "${f}"; then
               FAILED=true
             fi
           done
-          if [ "$FAILED" = true ]; then
+          if [[ "${FAILED}" = true ]]; then
             echo "::error::shellcheck found errors in one or more scripts"
             exit 1
           fi
@@ -383,14 +396,14 @@ jobs:
           fi
           # Also validate standalone .desktop files
           for f in packaging/debian/*.desktop; do
-            [ -f "$f" ] || continue
-            if desktop-file-validate "$f" 2>&1 | grep -q "warning:"; then
-              echo "::error::$f has warnings:"
-              desktop-file-validate "$f" 2>&1 | grep "warning:"
+            [[ -f "${f}" ]] || continue
+            if desktop-file-validate "${f}" 2>&1 | grep -q "warning:"; then
+              echo "::error::${f} has warnings:"
+              desktop-file-validate "${f}" 2>&1 | grep "warning:"
               FAILED=true
             fi
           done
-          if [ "$FAILED" = true ]; then
+          if [[ "${FAILED}" = true ]]; then
             exit 1
           fi
           echo "All .desktop files passed validation"
@@ -423,12 +436,12 @@ jobs:
           # loudly rather than silently weakening verification.
           EXPECTED="31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
           KEY="packaging/claude-desktop-archive-keyring.asc"
-          test -f "$KEY" || { echo "::error::$KEY missing"; exit 1; }
-          GNUPGHOME=$(mktemp -d); export GNUPGHOME; chmod 700 "$GNUPGHOME"
-          gpg --batch --quiet --import "$KEY"
+          test -f "${KEY}" || { echo "::error::${KEY} missing"; exit 1; }
+          GNUPGHOME=$(mktemp -d); export GNUPGHOME; chmod 700 "${GNUPGHOME}"
+          gpg --batch --quiet --import "${KEY}"
           if ! gpg --batch --with-colons --fingerprint 2>/dev/null \
                 | grep -q "^fpr:::::::::${EXPECTED}:"; then
-            echo "::error::$KEY fingerprint != expected ${EXPECTED}"
+            echo "::error::${KEY} fingerprint != expected ${EXPECTED}"
             exit 1
           fi
           echo "apt signing key fingerprint OK (${EXPECTED})"
@@ -456,7 +469,7 @@ jobs:
         id: bridge-rev
         run: |
           BRIDGE_SHA=$(git ls-remote https://github.com/patrickjaja/kwin-portal-bridge.git HEAD | cut -f1)
-          echo "sha=${BRIDGE_SHA}" >> $GITHUB_OUTPUT
+          echo "sha=${BRIDGE_SHA}" >> "${GITHUB_OUTPUT}"
           echo "kwin-portal-bridge HEAD: ${BRIDGE_SHA}"
 
       - name: Cache kwin-portal-bridge binaries
@@ -590,7 +603,7 @@ jobs:
         id: x11-rev
         run: |
           X11_SHA=$(git ls-remote https://github.com/patrickjaja/x11-bridge.git HEAD | cut -f1)
-          echo "sha=${X11_SHA}" >> $GITHUB_OUTPUT
+          echo "sha=${X11_SHA}" >> "${GITHUB_OUTPUT}"
           echo "x11-bridge HEAD: ${X11_SHA}"
 
       - name: Cache x11-bridge binaries
@@ -675,7 +688,7 @@ jobs:
         id: wlroots-rev
         run: |
           WLR_SHA=$(git ls-remote https://github.com/patrickjaja/wlroots-bridge.git HEAD | cut -f1)
-          echo "sha=${WLR_SHA}" >> $GITHUB_OUTPUT
+          echo "sha=${WLR_SHA}" >> "${GITHUB_OUTPUT}"
           echo "wlroots-bridge HEAD: ${WLR_SHA}"
 
       - name: Cache wlroots-bridge binaries
@@ -755,7 +768,7 @@ jobs:
         id: gnome-rev
         run: |
           GNOME_SHA=$(git ls-remote https://github.com/patrickjaja/gnome-bridge.git HEAD | cut -f1)
-          echo "sha=${GNOME_SHA}" >> $GITHUB_OUTPUT
+          echo "sha=${GNOME_SHA}" >> "${GITHUB_OUTPUT}"
           echo "gnome-bridge HEAD: ${GNOME_SHA}"
 
       - name: Cache gnome-portal-bridge binaries
@@ -884,29 +897,30 @@ jobs:
         run: |
           echo "=== Ingesting official .deb + applying patches in Arch container ==="
 
-          DEB=$(ls deb-input/claude-desktop_*_amd64.deb)
+          DEBS=(deb-input/claude-desktop_*_amd64.deb)
+          DEB=${DEBS[0]}
           echo "Ingesting: ${DEB}"
 
           mkdir -p /tmp/build-input /tmp/build-output
-          cp "$DEB" /tmp/build-input/claude.deb
+          cp "${DEB}" /tmp/build-input/claude.deb
           cp -r scripts patches js packaging /tmp/build-input/
 
           # Pass the bridge binaries if available: kwin-portal-bridge for KDE
           # Wayland Computer Use, x11-bridge for X11 / XWayland Computer Use.
           DOCKER_ENV=()
-          if [ -f /tmp/bridge-output/kwin-portal-bridge ]; then
+          if [[ -f /tmp/bridge-output/kwin-portal-bridge ]]; then
             cp /tmp/bridge-output/kwin-portal-bridge /tmp/build-input/kwin-portal-bridge
             DOCKER_ENV+=(-e KWIN_PORTAL_BRIDGE_BIN=/input/kwin-portal-bridge)
           fi
-          if [ -f /tmp/x11-bridge-output/x11-bridge ]; then
+          if [[ -f /tmp/x11-bridge-output/x11-bridge ]]; then
             cp /tmp/x11-bridge-output/x11-bridge /tmp/build-input/x11-bridge
             DOCKER_ENV+=(-e X11_BRIDGE_BIN=/input/x11-bridge)
           fi
-          if [ -f /tmp/wlroots-bridge-output/wlroots-bridge ]; then
+          if [[ -f /tmp/wlroots-bridge-output/wlroots-bridge ]]; then
             cp /tmp/wlroots-bridge-output/wlroots-bridge /tmp/build-input/wlroots-bridge
             DOCKER_ENV+=(-e WLROOTS_BRIDGE_BIN=/input/wlroots-bridge)
           fi
-          if [ -f /tmp/gnome-bridge-output/gnome-portal-bridge ]; then
+          if [[ -f /tmp/gnome-bridge-output/gnome-portal-bridge ]]; then
             cp /tmp/gnome-bridge-output/gnome-portal-bridge /tmp/build-input/gnome-portal-bridge
             DOCKER_ENV+=(-e GNOME_PORTAL_BRIDGE_BIN=/input/gnome-portal-bridge)
           fi
@@ -957,7 +971,7 @@ jobs:
 
           BUILD_EXIT=${PIPESTATUS[0]}
 
-          if [ $BUILD_EXIT -ne 0 ]; then
+          if [[ ${BUILD_EXIT} -ne 0 ]]; then
             echo ""
             echo "::error::Build FAILED!"
             echo ""
@@ -971,7 +985,7 @@ jobs:
 
           # shellcheck disable=SC1091
           source /tmp/build-output/build-info.txt
-          echo "tarball_sha256=${SHA256}" >> "$GITHUB_OUTPUT"
+          echo "tarball_sha256=${SHA256}" >> "${GITHUB_OUTPUT}"
 
           echo "Build passed - tarball ready for upload"
           echo "  Version:  ${VERSION}"
@@ -1073,29 +1087,30 @@ jobs:
         run: |
           echo "=== Ingesting official arm64 .deb + applying patches ==="
 
-          DEB=$(ls deb-input/claude-desktop_*_arm64.deb)
+          DEBS=(deb-input/claude-desktop_*_arm64.deb)
+          DEB=${DEBS[0]}
           echo "Ingesting: ${DEB}"
 
           mkdir -p /tmp/build-input-arm /tmp/build-output-arm
-          cp "$DEB" /tmp/build-input-arm/claude.deb
+          cp "${DEB}" /tmp/build-input-arm/claude.deb
           cp -r scripts patches js packaging /tmp/build-input-arm/
 
           # Bundle the prebuilt arm64 bridges: kwin-portal-bridge (KDE Wayland)
           # and x11-bridge (X11 / XWayland).
           DOCKER_ENV=()
-          if [ -f kwin-portal-bridge-aarch64 ]; then
+          if [[ -f kwin-portal-bridge-aarch64 ]]; then
             cp kwin-portal-bridge-aarch64 /tmp/build-input-arm/kwin-portal-bridge
             DOCKER_ENV+=(-e KWIN_PORTAL_BRIDGE_BIN=/input/kwin-portal-bridge)
           fi
-          if [ -f x11-bridge-aarch64 ]; then
+          if [[ -f x11-bridge-aarch64 ]]; then
             cp x11-bridge-aarch64 /tmp/build-input-arm/x11-bridge
             DOCKER_ENV+=(-e X11_BRIDGE_BIN=/input/x11-bridge)
           fi
-          if [ -f wlroots-bridge-aarch64 ]; then
+          if [[ -f wlroots-bridge-aarch64 ]]; then
             cp wlroots-bridge-aarch64 /tmp/build-input-arm/wlroots-bridge
             DOCKER_ENV+=(-e WLROOTS_BRIDGE_BIN=/input/wlroots-bridge)
           fi
-          if [ -f gnome-portal-bridge-aarch64 ]; then
+          if [[ -f gnome-portal-bridge-aarch64 ]]; then
             cp gnome-portal-bridge-aarch64 /tmp/build-input-arm/gnome-portal-bridge
             DOCKER_ENV+=(-e GNOME_PORTAL_BRIDGE_BIN=/input/gnome-portal-bridge)
           fi
@@ -1125,7 +1140,7 @@ jobs:
             " 2>&1 | tee build-output-arm.log
 
           BUILD_EXIT=${PIPESTATUS[0]}
-          if [ $BUILD_EXIT -ne 0 ]; then
+          if [[ ${BUILD_EXIT} -ne 0 ]]; then
             echo "::error::aarch64 build FAILED"
             grep -E "(ERROR|FAIL|\[FAIL\])" build-output-arm.log || true
             exit 1
@@ -1134,10 +1149,12 @@ jobs:
           # build-patched-tarball.sh names the arm64 output with the -aarch64 suffix.
           # shellcheck disable=SC1091
           source /tmp/build-output-arm/build-info.txt
-          TARBALL=$(ls /tmp/build-output-arm/claude-desktop-*-linux-aarch64.tar.gz)
-          cp "$TARBALL" .
-          echo "tarball_aarch64_sha256=${SHA256}" >> "$GITHUB_OUTPUT"
-          echo "Built aarch64 tarball: $(basename "$TARBALL") (arch=${ARCH:-arm64}, SHA256: ${SHA256})"
+          TARBALLS=(/tmp/build-output-arm/claude-desktop-*-linux-aarch64.tar.gz)
+          TARBALL=${TARBALLS[0]}
+          cp "${TARBALL}" .
+          echo "tarball_aarch64_sha256=${SHA256}" >> "${GITHUB_OUTPUT}"
+          TARBALL_BASENAME=$(basename "${TARBALL}")
+          echo "Built aarch64 tarball: ${TARBALL_BASENAME} (arch=${ARCH:-arm64}, SHA256: ${SHA256})"
 
       - name: Upload aarch64 tarball
         uses: actions/upload-artifact@v7
@@ -1181,7 +1198,7 @@ jobs:
         env:
           VERSION: ${{ needs.check-version.outputs.version }}
         run: |
-          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+          if [[ "${{ matrix.arch }}" = "aarch64" ]]; then
             TARBALL="claude-desktop-${VERSION}-linux-aarch64.tar.gz"
             ARCH_ARGS=(--arch aarch64)
           else
@@ -1193,21 +1210,22 @@ jobs:
 
       - name: Test AppImage
         run: |
-          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+          if [[ "${{ matrix.arch }}" = "aarch64" ]]; then
             # AppImage outer ELF is aarch64 (can't execute under QEMU in Docker).
             # Verify on the host: check ELF arch, then extract with squashfs-tools
             # and validate the inner Electron binary is also aarch64.
             sudo apt-get install -y -qq squashfs-tools >/dev/null
 
-            APPIMAGE="$(ls dist/Claude_Desktop-*-aarch64.AppImage)"
+            APPIMAGES=(dist/Claude_Desktop-*-aarch64.AppImage)
+            APPIMAGE=${APPIMAGES[0]}
 
             # 1. Verify outer ELF is aarch64
-            file "$APPIMAGE" | grep -q 'aarch64\|ARM aarch64'
+            file "${APPIMAGE}" | grep -q 'aarch64\|ARM aarch64'
             echo "AppImage outer ELF is aarch64 — OK"
 
             # 2. Extract squashfs payload (skip ELF runtime to find hsqs magic)
-            OFFSET=$(python3 -c "import sys; data=open('$APPIMAGE','rb').read(); idx=data.find(b'hsqs'); assert idx>0,'squashfs magic not found'; print(idx)")
-            unsquashfs -f -d /tmp/squashfs-root -o "$OFFSET" "$APPIMAGE"
+            OFFSET=$(python3 -c "import sys; data=open('${APPIMAGE}','rb').read(); idx=data.find(b'hsqs'); assert idx>0,'squashfs magic not found'; print(idx)")
+            unsquashfs -f -d /tmp/squashfs-root -o "${OFFSET}" "${APPIMAGE}"
 
             # 3. Verify inner contents
             test -f /tmp/squashfs-root/usr/lib/claude-desktop/resources/app.asar
@@ -1217,8 +1235,8 @@ jobs:
             rm -rf /tmp/squashfs-root
           else
             docker run --rm \
-              -v "$(pwd)/dist:/dist:ro" \
-              -v "$(pwd)/scripts:/scripts:ro" \
+              -v "${PWD}/dist:/dist:ro" \
+              -v "${PWD}/scripts:/scripts:ro" \
               ubuntu:22.04 \
               bash -c "
                 set -e
@@ -1289,7 +1307,7 @@ jobs:
           VERSION: ${{ needs.check-version.outputs.version }}
           PKGREL: ${{ needs.check-version.outputs.pkgrel }}
         run: |
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
+          if [[ "${{ matrix.arch }}" = "arm64" ]]; then
             TARBALL="claude-desktop-${VERSION}-linux-aarch64.tar.gz"
             ARCH_ARGS=(--arch arm64)
           else
@@ -1301,10 +1319,10 @@ jobs:
 
       - name: Test Debian Package (${{ matrix.arch }})
         run: |
-          if [ "${{ matrix.arch }}" = "arm64" ]; then
+          if [[ "${{ matrix.arch }}" = "arm64" ]]; then
             docker run --rm --platform linux/arm64 \
-              -v "$(pwd)/dist:/dist:ro" \
-              -v "$(pwd)/scripts:/scripts:ro" \
+              -v "${PWD}/dist:/dist:ro" \
+              -v "${PWD}/scripts:/scripts:ro" \
               arm64v8/ubuntu:22.04 \
               bash -c "
                 set -e
@@ -1319,8 +1337,8 @@ jobs:
           else
             # Ubuntu 22.04: the deb's oldest supported target (glibc 2.35).
             docker run --rm \
-              -v "$(pwd)/dist:/dist:ro" \
-              -v "$(pwd)/scripts:/scripts:ro" \
+              -v "${PWD}/dist:/dist:ro" \
+              -v "${PWD}/scripts:/scripts:ro" \
               ubuntu:22.04 \
               bash -c "
                 set -e
@@ -1333,8 +1351,8 @@ jobs:
 
             # Debian 12: real Debian coverage (previously only proxied by Ubuntu).
             docker run --rm \
-              -v "$(pwd)/dist:/dist:ro" \
-              -v "$(pwd)/scripts:/scripts:ro" \
+              -v "${PWD}/dist:/dist:ro" \
+              -v "${PWD}/scripts:/scripts:ro" \
               debian:12 \
               bash -c "
                 set -e
@@ -1352,8 +1370,8 @@ jobs:
             # The only automated coverage of the Wayland code path (the xvfb smoke
             # tests above are all X11); catches ozone/wayland init regressions.
             docker run --rm \
-              -v "$(pwd)/dist:/dist:ro" \
-              -v "$(pwd)/scripts:/scripts:ro" \
+              -v "${PWD}/dist:/dist:ro" \
+              -v "${PWD}/scripts:/scripts:ro" \
               ubuntu:24.04 \
               bash -c '
                 set -e
@@ -1432,7 +1450,7 @@ jobs:
           VERSION: ${{ needs.check-version.outputs.version }}
           PKGREL: ${{ needs.check-version.outputs.pkgrel }}
         run: |
-          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+          if [[ "${{ matrix.arch }}" = "aarch64" ]]; then
             TARBALL="claude-desktop-${VERSION}-linux-aarch64.tar.gz"
             ARCH_ARGS=(--arch aarch64)
           else
@@ -1441,8 +1459,8 @@ jobs:
           fi
 
           docker run --rm \
-            -v "$(pwd):/build:ro" \
-            -v "$(pwd)/dist:/output" \
+            -v "${PWD}:/build:ro" \
+            -v "${PWD}/dist:/output" \
             fedora:40 \
             bash -c '
               set -euo pipefail
@@ -1452,9 +1470,9 @@ jobs:
 
       - name: Test RPM Package (${{ matrix.arch }})
         run: |
-          if [ "${{ matrix.arch }}" = "aarch64" ]; then
+          if [[ "${{ matrix.arch }}" = "aarch64" ]]; then
             docker run --rm --platform linux/arm64 \
-              -v "$(pwd)/dist:/dist:ro" \
+              -v "${PWD}/dist:/dist:ro" \
               arm64v8/fedora:40 \
               bash -c "
                 set -e
@@ -1466,8 +1484,8 @@ jobs:
               "
           else
             docker run --rm \
-              -v "$(pwd)/dist:/dist:ro" \
-              -v "$(pwd)/scripts:/scripts:ro" \
+              -v "${PWD}/dist:/dist:ro" \
+              -v "${PWD}/scripts:/scripts:ro" \
               fedora:40 \
               bash -c "
                 set -e
@@ -1481,8 +1499,8 @@ jobs:
             # automatic ELF scan harvests the bundled CU bridges' glibc-2.39
             # symbols and the package becomes uninstallable on RHEL 9.
             docker run --rm \
-              -v "$(pwd)/dist:/dist:ro" \
-              -v "$(pwd)/scripts:/scripts:ro" \
+              -v "${PWD}/dist:/dist:ro" \
+              -v "${PWD}/scripts:/scripts:ro" \
               rockylinux:9 \
               bash -c "
                 set -e
@@ -1528,15 +1546,15 @@ jobs:
         env:
           VERSION: ${{ needs.check-version.outputs.version }}
         run: |
-          TARBALL="$(pwd)/claude-desktop-${VERSION}-linux.tar.gz"
+          TARBALL="${PWD}/claude-desktop-${VERSION}-linux.tar.gz"
 
-          HASH=$(nix hash file --type sha256 --sri "$TARBALL")
-          echo "nix_hash=${HASH}" >> $GITHUB_OUTPUT
+          HASH=$(nix hash file --type sha256 --sri "${TARBALL}")
+          echo "nix_hash=${HASH}" >> "${GITHUB_OUTPUT}"
 
-          sed -i -E "s|version = \"[^\"]+\"|version = \"$VERSION\"|" packaging/nix/package.nix
-          sed -i -E "s|hash = \"sha256-[^\"]+\"|hash = \"$HASH\"|" packaging/nix/package.nix
+          sed -i -E "s|version = \"[^\"]+\"|version = \"${VERSION}\"|" packaging/nix/package.nix
+          sed -i -E "s|hash = \"sha256-[^\"]+\"|hash = \"${HASH}\"|" packaging/nix/package.nix
 
-          awk -v tarball="$TARBALL" '
+          awk -v tarball="${TARBALL}" '
             /src = fetchurl \{/ { print "  src = " tarball ";"; skip=1; next }
             skip && /\};/ { skip=0; next }
             !skip' packaging/nix/package.nix > /tmp/package-ci.nix
@@ -1567,7 +1585,7 @@ jobs:
         run: |
           PREBUILT_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/claude-desktop-${VERSION}-linux.tar.gz"
           export DOWNLOAD_URL_AARCH64="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/claude-desktop-${VERSION}-linux-aarch64.tar.gz"
-          bash ./scripts/generate-pkgbuild.sh "${VERSION}" "${TARBALL_SHA256}" "$PREBUILT_URL" "${PKGREL}" > PKGBUILD
+          bash ./scripts/generate-pkgbuild.sh "${VERSION}" "${TARBALL_SHA256}" "${PREBUILT_URL}" "${PKGREL}" > PKGBUILD
           cat PKGBUILD
 
       - name: Generate .SRCINFO
@@ -1696,7 +1714,7 @@ jobs:
           # THIS arch at the local tarball so makepkg builds offline (the release
           # isn't published yet), and neutralize the OTHER arch's source so
           # nothing tries to fetch a URL that does not exist yet.
-          if [ "$TARGET_ARCH" = "aarch64" ]; then
+          if [[ "${TARGET_ARCH}" = "aarch64" ]]; then
             TARBALL="claude-desktop-${VERSION}-linux-aarch64.tar.gz"
             sed -i "s|^source_aarch64=.*|source_aarch64=(\"${TARBALL}\")|" PKGBUILD
             sed -i "s|^sha256sums_aarch64=.*|sha256sums_aarch64=('SKIP')|" PKGBUILD
@@ -1714,13 +1732,13 @@ jobs:
           # claude-desktop-extra.install must sit next to PKGBUILD (makepkg reads
           # the install= file relative to the PKGBUILD dir).
           mkdir -p /tmp/pkgbuild-test dist
-          cp PKGBUILD .SRCINFO claude-desktop-extra.install "$TARBALL" /tmp/pkgbuild-test/
+          cp PKGBUILD .SRCINFO claude-desktop-extra.install "${TARBALL}" /tmp/pkgbuild-test/
 
           docker run --rm \
             --tmpfs /tmp/cross-device:exec,size=2g \
             -e TARGET_ARCH \
             -v /tmp/pkgbuild-test:/input:ro \
-            -v "$(pwd)/dist:/output" \
+            -v "${PWD}/dist:/output" \
             archlinux:base-devel \
             bash -c '
               set -euo pipefail
@@ -1926,22 +1944,22 @@ jobs:
         env:
           GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
         run: |
-          if [ -z "$GPG_PRIVATE_KEY" ]; then
+          if [[ -z "${GPG_PRIVATE_KEY}" ]]; then
             echo "::error::APT_GPG_PRIVATE_KEY is required for release publishing"
             exit 1
           fi
-          KEY_INFO=$(printf '%s\n' "$GPG_PRIVATE_KEY" \
+          KEY_INFO=$(printf '%s\n' "${GPG_PRIVATE_KEY}" \
             | gpg --batch --show-keys --with-colons 2>/dev/null)
-          if ! awk -F: '$1 == "sec" { found = 1 } END { exit !found }' <<< "$KEY_INFO"; then
+          if ! awk -F: '$1 == "sec" { found = 1 } END { exit !found }' <<< "${KEY_INFO}"; then
             echo "::error::APT_GPG_PRIVATE_KEY does not contain a private key"
             exit 1
           fi
-          FINGERPRINT=$(awk -F: '$1 == "fpr" { print $10; exit }' <<< "$KEY_INFO")
-          if [ -z "$FINGERPRINT" ]; then
+          FINGERPRINT=$(awk -F: '$1 == "fpr" { print $10; exit }' <<< "${KEY_INFO}")
+          if [[ -z "${FINGERPRINT}" ]]; then
             echo "::error::Could not derive a fingerprint from APT_GPG_PRIVATE_KEY"
             exit 1
           fi
-          echo "fingerprint=${FINGERPRINT}" >> "$GITHUB_OUTPUT"
+          echo "fingerprint=${FINGERPRINT}" >> "${GITHUB_OUTPUT}"
 
       # ── AUR preflight (canonical repo only) ─────────────────────────
       # Forks only publish to channels they own (GitHub Release / optional
@@ -1970,7 +1988,7 @@ jobs:
             if git ls-remote ssh://aur@aur.archlinux.org/claude-desktop-extra.git HEAD; then
               exit 0
             fi
-            echo "AUR unreachable (attempt $i/3), retrying in 30s..."
+            echo "AUR unreachable (attempt ${i}/3), retrying in 30s..."
             sleep 30
           done
           echo "::error::AUR is unreachable - aborting BEFORE publishing anything, all channels stay on the previous version. Re-run this workflow once the AUR is back up."
@@ -2029,22 +2047,36 @@ jobs:
           # script copies each package into its output dir itself), and that
           # output is what lands in release-files/. Checksums are computed from
           # the artifacts, which are byte-identical to what gets published.
-          PKG_X86_64=$(ls artifacts/arch-package-x86_64/claude-desktop-extra-*-x86_64.pkg.tar.zst)
-          PKG_AARCH64=$(ls artifacts/arch-package-aarch64/claude-desktop-extra-*-aarch64.pkg.tar.zst)
-          echo "pkg_x86_64_sha256=$(sha256sum "$PKG_X86_64" | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "pkg_aarch64_sha256=$(sha256sum "$PKG_AARCH64" | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          PKGS_X86_64=(artifacts/arch-package-x86_64/claude-desktop-extra-*-x86_64.pkg.tar.zst)
+          PKGS_AARCH64=(artifacts/arch-package-aarch64/claude-desktop-extra-*-aarch64.pkg.tar.zst)
+          PKG_X86_64=${PKGS_X86_64[0]}
+          PKG_AARCH64=${PKGS_AARCH64[0]}
+          PKG_X86_64_SHA=$(sha256sum "${PKG_X86_64}" | cut -d' ' -f1)
+          PKG_AARCH64_SHA=$(sha256sum "${PKG_AARCH64}" | cut -d' ' -f1)
 
           # Compute all SHA256 checksums
-          # Use ls + grep to avoid glob matching both tarballs
-          TARBALL_X86=$(ls release-files/claude-desktop-*-linux.tar.gz | grep -v aarch64)
-          echo "tarball_sha256=$(sha256sum "$TARBALL_X86" | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "tarball_aarch64_sha256=$(sha256sum release-files/claude-desktop-*-linux-aarch64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "appimage_x86_64_sha256=$(sha256sum release-files/Claude_Desktop-*-x86_64.AppImage | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "appimage_aarch64_sha256=$(sha256sum release-files/Claude_Desktop-*-aarch64.AppImage | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "deb_amd64_sha256=$(sha256sum release-files/claude-desktop-extra_*_amd64.deb | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "deb_arm64_sha256=$(sha256sum release-files/claude-desktop-extra_*_arm64.deb | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "rpm_x86_64_sha256=$(sha256sum release-files/claude-desktop-extra-*.x86_64.rpm | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "rpm_aarch64_sha256=$(sha256sum release-files/claude-desktop-extra-*.aarch64.rpm | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          TARBALLS_X86=(release-files/claude-desktop-*-linux.tar.gz)
+          TARBALL_X86=${TARBALLS_X86[0]}
+          TARBALL_SHA=$(sha256sum "${TARBALL_X86}" | cut -d' ' -f1)
+          TARBALL_AARCH64_SHA=$(sha256sum release-files/claude-desktop-*-linux-aarch64.tar.gz | cut -d' ' -f1)
+          APPIMAGE_X86_64_SHA=$(sha256sum release-files/Claude_Desktop-*-x86_64.AppImage | cut -d' ' -f1)
+          APPIMAGE_AARCH64_SHA=$(sha256sum release-files/Claude_Desktop-*-aarch64.AppImage | cut -d' ' -f1)
+          DEB_AMD64_SHA=$(sha256sum release-files/claude-desktop-extra_*_amd64.deb | cut -d' ' -f1)
+          DEB_ARM64_SHA=$(sha256sum release-files/claude-desktop-extra_*_arm64.deb | cut -d' ' -f1)
+          RPM_X86_64_SHA=$(sha256sum release-files/claude-desktop-extra-*.x86_64.rpm | cut -d' ' -f1)
+          RPM_AARCH64_SHA=$(sha256sum release-files/claude-desktop-extra-*.aarch64.rpm | cut -d' ' -f1)
+          {
+            echo "pkg_x86_64_sha256=${PKG_X86_64_SHA}"
+            echo "pkg_aarch64_sha256=${PKG_AARCH64_SHA}"
+            echo "tarball_sha256=${TARBALL_SHA}"
+            echo "tarball_aarch64_sha256=${TARBALL_AARCH64_SHA}"
+            echo "appimage_x86_64_sha256=${APPIMAGE_X86_64_SHA}"
+            echo "appimage_aarch64_sha256=${APPIMAGE_AARCH64_SHA}"
+            echo "deb_amd64_sha256=${DEB_AMD64_SHA}"
+            echo "deb_arm64_sha256=${DEB_ARM64_SHA}"
+            echo "rpm_x86_64_sha256=${RPM_X86_64_SHA}"
+            echo "rpm_aarch64_sha256=${RPM_AARCH64_SHA}"
+          } >> "${GITHUB_OUTPUT}"
 
           ls -la release-files/
 
@@ -2069,17 +2101,17 @@ jobs:
           cp artifacts/arch-package-x86_64/claude-desktop-extra-*-x86_64.pkg.tar.zst pacman-in/
           cp artifacts/arch-package-aarch64/claude-desktop-extra-*-aarch64.pkg.tar.zst pacman-in/
 
-          if [ -z "$GPG_PRIVATE_KEY" ]; then
+          if [[ -z "${GPG_PRIVATE_KEY}" ]]; then
             echo "::error::APT_GPG_PRIVATE_KEY is required for the pacman repository"
             exit 1
           fi
 
           mkdir -p /tmp/pacman-gpg
-          printf '%s\n' "$GPG_PRIVATE_KEY" > /tmp/pacman-gpg/private.key
+          printf '%s\n' "${GPG_PRIVATE_KEY}" > /tmp/pacman-gpg/private.key
           chmod 600 /tmp/pacman-gpg/private.key
 
           docker run --rm \
-            -v "$(pwd):/work" \
+            -v "${PWD}:/work" \
             -v /tmp/pacman-gpg:/gpg:ro \
             -w /work \
             archlinux:base-devel \
@@ -2092,15 +2124,15 @@ jobs:
               # hardcoded fingerprint.
               GPG_KEY_ID=$(gpg --show-keys --with-colons /gpg/private.key 2>/dev/null \
                 | grep "^sec:" | head -1 | cut -d: -f5)
-              if [ -z "$GPG_KEY_ID" ]; then
+              if [[ -z "${GPG_KEY_ID}" ]]; then
                 echo "::error::could not derive a signing key id from APT_GPG_PRIVATE_KEY"
                 exit 1
               fi
-              echo "Signing pacman repository with key $GPG_KEY_ID"
+              echo "Signing pacman repository with key ${GPG_KEY_ID}"
 
               for PKG in /work/pacman-in/*.pkg.tar.zst; do
                 bash /work/packaging/pacman/update-pacman-repo.sh \
-                  "$PKG" /work/pacman-repo "$GPG_KEY_ID"
+                  "${PKG}" /work/pacman-repo "${GPG_KEY_ID}"
               done
             '
 
@@ -2109,7 +2141,9 @@ jobs:
           # The container wrote as root into the workspace. Reclaim ownership so
           # the later `git clean -fdx` and Cleanup steps can remove these paths
           # and so the copy below can read them.
-          sudo chown -R "$(id -u):$(id -g)" pacman-repo pacman-in
+          RUNNER_UID=$(id -u)
+          RUNNER_GID=$(id -g)
+          sudo chown -R "${RUNNER_UID}:${RUNNER_GID}" pacman-repo pacman-in
 
           # ── Positive end-state assertions ──────────────────────────────
           # Never advertise a repo we have not verified. pacman with
@@ -2126,22 +2160,25 @@ jobs:
           for REPO_NAME in claude-desktop-extra claude-desktop-extra-aarch64 claude-desktop-bin claude-desktop-bin-aarch64; do
             for SUFFIX in db db.sig files files.sig; do
               F="pacman-repo/${REPO_NAME}.${SUFFIX}"
-              if [ ! -f "$F" ] || [ -L "$F" ]; then
+              if [[ ! -f "${F}" || -L "${F}" ]]; then
                 echo "::error::pacman repo database file missing or not a real file: ${F}"
                 FAILED=1
               fi
             done
             # Companion .tar.gz variants exist only for the live repo names -
             # the LEGACY_DB_ALIAS copies deliberately alias .db/.files alone.
-            case "$REPO_NAME" in claude-desktop-bin*) continue ;; esac
+            case "${REPO_NAME}" in
+              claude-desktop-bin*) continue ;;
+              *) ;;
+            esac
             for SUFFIX in db.tar.gz db.tar.gz.sig files.tar.gz files.tar.gz.sig; do
               F="pacman-repo/${REPO_NAME}.${SUFFIX}"
-              if [ ! -f "$F" ] || [ -L "$F" ]; then
+              if [[ ! -f "${F}" || -L "${F}" ]]; then
                 echo "::warning::pacman repo companion file missing or not a real file: ${F}"
               fi
             done
           done
-          if [ "$FAILED" != 0 ]; then
+          if [[ "${FAILED}" != 0 ]]; then
             echo "::error::pacman repository is incomplete - refusing to publish a release that advertises it"
             exit 1
           fi
@@ -2152,19 +2189,19 @@ jobs:
           # The db is worthless without the packages it indexes, and each
           # package needs its detached signature.
           for PKG in pacman-in/*.pkg.tar.zst; do
-            BASE=$(basename "$PKG")
+            BASE=$(basename "${PKG}")
             for F in "release-files/${BASE}" "release-files/${BASE}.sig"; do
-              if [ ! -f "$F" ]; then
+              if [[ ! -f "${F}" ]]; then
                 echo "::error::missing pacman release asset: ${F}"
                 FAILED=1
               fi
             done
           done
-          if [ "$FAILED" != 0 ]; then
+          if [[ "${FAILED}" != 0 ]]; then
             exit 1
           fi
 
-          echo "repo_available=true" >> $GITHUB_OUTPUT
+          echo "repo_available=true" >> "${GITHUB_OUTPUT}"
           echo "=== pacman repository assets ==="
           ls -la pacman-repo/
 
@@ -2177,23 +2214,27 @@ jobs:
         run: |
           OWNER="${GITHUB_REPOSITORY%%/*}"
           NAME="${GITHUB_REPOSITORY#*/}"
+          GRAPHQL_QUERY=$(cat <<'GRAPHQL'
+          query($owner: String!, $name: String!, $tag: String!, $ref: String!) {
+            repository(owner: $owner, name: $name) {
+              release(tagName: $tag) { tagName }
+              ref(qualifiedName: $ref) { name }
+            }
+          }
+          GRAPHQL
+          )
           OCCUPIED=$(gh api graphql \
-            -f owner="$OWNER" \
-            -f name="$NAME" \
-            -f tag="$TAG" \
+            -f owner="${OWNER}" \
+            -f name="${NAME}" \
+            -f tag="${TAG}" \
             -f ref="refs/tags/${TAG}" \
-            -f query='query($owner: String!, $name: String!, $tag: String!, $ref: String!) {
-              repository(owner: $owner, name: $name) {
-                release(tagName: $tag) { tagName }
-                ref(qualifiedName: $ref) { name }
-              }
-            }' \
+            -f query="${GRAPHQL_QUERY}" \
             --jq '[.data.repository.release, .data.repository.ref] | any')
-          if [ "$OCCUPIED" = "true" ]; then
+          if [[ "${OCCUPIED}" = "true" ]]; then
             echo "::error::Release ${TAG} was claimed after artifacts were built; rerun to rebuild with the next pkgrel"
             exit 1
           fi
-          if [ "$OCCUPIED" != "false" ]; then
+          if [[ "${OCCUPIED}" != "false" ]]; then
             echo "::error::Unexpected occupancy result for ${TAG}: ${OCCUPIED}"
             exit 1
           fi
@@ -2336,21 +2377,22 @@ jobs:
           RELEASE_NAME: ${{ needs.check-version.outputs.release_name }}
           MAKE_LATEST: ${{ needs.check-version.outputs.make_latest }}
         run: |
-          if [ -z "$GH_TOKEN" ]; then
+          if [[ -z "${GH_TOKEN}" ]]; then
             echo "LEGACY_MIRROR_TOKEN not set - legacy release mirror disabled, skipping"
             exit 0
           fi
           LEGACY_REPO="patrickjaja/claude-desktop-bin"
-          if ! gh release view "$TAG" -R "$LEGACY_REPO" > /dev/null 2>&1; then
-            gh release create "$TAG" -R "$LEGACY_REPO" \
+          if ! gh release view "${TAG}" -R "${LEGACY_REPO}" > /dev/null 2>&1; then
+            gh release create "${TAG}" -R "${LEGACY_REPO}" \
               --target main \
               --title "${RELEASE_NAME} (legacy mirror)" \
               --latest="${MAKE_LATEST:-true}" \
               --notes "Legacy mirror of https://github.com/${GITHUB_REPOSITORY}/releases/tag/${TAG}. The project was renamed to claude-desktop-extra - see https://github.com/${GITHUB_REPOSITORY} for the release notes and migration guide. This mirror keeps pre-rename pacman/AppImage installs updating during the transition window."
           fi
-          gh release upload "$TAG" -R "$LEGACY_REPO" --clobber \
+          gh release upload "${TAG}" -R "${LEGACY_REPO}" --clobber \
             release-files/*
-          echo "Mirrored $(ls release-files | wc -l) assets to ${LEGACY_REPO}@${TAG}"
+          RELEASE_ASSETS=(release-files/*)
+          echo "Mirrored ${#RELEASE_ASSETS[@]} assets to ${LEGACY_REPO}@${TAG}"
 
       - name: Deploy APT Repository and static files
         id: pages
@@ -2360,47 +2402,47 @@ jobs:
           VERSION: ${{ needs.check-version.outputs.version }}
           PKGREL: ${{ needs.check-version.outputs.pkgrel }}
         run: |
-          DEB_FILE_AMD64="$(pwd)/release-files/claude-desktop-extra_${VERSION}-${PKGREL}_amd64.deb"
-          DEB_FILE_ARM64="$(pwd)/release-files/claude-desktop-extra_${VERSION}-${PKGREL}_arm64.deb"
-          RPM_FILE_X86_64="$(pwd)/release-files/claude-desktop-extra-${VERSION}-${PKGREL}.x86_64.rpm"
-          RPM_FILE_AARCH64="$(pwd)/release-files/claude-desktop-extra-${VERSION}-${PKGREL}.aarch64.rpm"
-          PKG_FILE_X86_64="$(pwd)/release-files/claude-desktop-extra-${VERSION}-${PKGREL}-x86_64.pkg.tar.zst"
-          PKG_FILE_AARCH64="$(pwd)/release-files/claude-desktop-extra-${VERSION}-${PKGREL}-aarch64.pkg.tar.zst"
+          DEB_FILE_AMD64="${PWD}/release-files/claude-desktop-extra_${VERSION}-${PKGREL}_amd64.deb"
+          DEB_FILE_ARM64="${PWD}/release-files/claude-desktop-extra_${VERSION}-${PKGREL}_arm64.deb"
+          RPM_FILE_X86_64="${PWD}/release-files/claude-desktop-extra-${VERSION}-${PKGREL}.x86_64.rpm"
+          RPM_FILE_AARCH64="${PWD}/release-files/claude-desktop-extra-${VERSION}-${PKGREL}.aarch64.rpm"
+          PKG_FILE_X86_64="${PWD}/release-files/claude-desktop-extra-${VERSION}-${PKGREL}-x86_64.pkg.tar.zst"
+          PKG_FILE_AARCH64="${PWD}/release-files/claude-desktop-extra-${VERSION}-${PKGREL}-aarch64.pkg.tar.zst"
 
-          if [ -z "$GPG_PRIVATE_KEY" ]; then
+          if [[ -z "${GPG_PRIVATE_KEY}" ]]; then
             echo "::error::APT_GPG_PRIVATE_KEY is required for APT/RPM repository deployment"
             exit 1
           fi
 
           sudo apt-get install -y dpkg-dev apt-utils
 
-          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
-          GPG_KEY_ID=$(echo "$GPG_PRIVATE_KEY" | gpg --show-keys --with-colons 2>/dev/null \
+          echo "${GPG_PRIVATE_KEY}" | gpg --batch --import
+          GPG_KEY_ID=$(echo "${GPG_PRIVATE_KEY}" | gpg --show-keys --with-colons 2>/dev/null \
             | grep '^sec:' | head -1 | cut -d: -f5)
 
           REPO_DIR="/tmp/gh-pages-repo"
-          rm -rf "$REPO_DIR"
-          mkdir -p "$REPO_DIR"
+          rm -rf "${REPO_DIR}"
+          mkdir -p "${REPO_DIR}"
 
-          cp packaging/apt/install.sh "$REPO_DIR/"
-          cp site/index.html "$REPO_DIR/"
-          cp packaging/rpm/install-rpm.sh "$REPO_DIR/"
+          cp packaging/apt/install.sh "${REPO_DIR}/"
+          cp site/index.html "${REPO_DIR}/"
+          cp packaging/rpm/install-rpm.sh "${REPO_DIR}/"
           # The pacman repo itself lives on the release assets, but its
           # bootstrap script is served from Pages like the apt/rpm ones.
-          cp packaging/pacman/install-pacman.sh "$REPO_DIR/"
+          cp packaging/pacman/install-pacman.sh "${REPO_DIR}/"
           REPO_NAME="${GITHUB_REPOSITORY#*/}"
           REPO_OWNER="${GITHUB_REPOSITORY%%/*}"
           sed -i \
             -e "s|https://patrickjaja.github.io/claude-desktop-extra|https://${REPO_OWNER}.github.io/${REPO_NAME}|g" \
             -e "s|https://github.com/patrickjaja/claude-desktop-extra|https://github.com/${GITHUB_REPOSITORY}|g" \
             -e "s|github:patrickjaja/claude-desktop-extra|github:${GITHUB_REPOSITORY}|g" \
-            "$REPO_DIR/index.html"
-          gpg --armor --export "$GPG_KEY_ID" > "$REPO_DIR/gpg-key.asc"
-          touch "$REPO_DIR/.nojekyll"
+            "${REPO_DIR}/index.html"
+          gpg --armor --export "${GPG_KEY_ID}" > "${REPO_DIR}/gpg-key.asc"
+          touch "${REPO_DIR}/.nojekyll"
 
           # Shields.io endpoint badges
-          mkdir -p "$REPO_DIR/badges"
-          cat > "$REPO_DIR/badges/version-check.json" <<BADGE_EOF
+          mkdir -p "${REPO_DIR}/badges"
+          cat > "${REPO_DIR}/badges/version-check.json" <<BADGE_EOF
           {
             "schemaVersion": 1,
             "label": "Claude Desktop",
@@ -2411,16 +2453,16 @@ jobs:
 
           # Detect which architectures were actually built
           DEB_ARCHS=""
-          [ -f "$DEB_FILE_AMD64" ] && DEB_ARCHS="amd64"
-          [ -f "$DEB_FILE_ARM64" ] && DEB_ARCHS="${DEB_ARCHS:+$DEB_ARCHS, }arm64"
+          [[ -f "${DEB_FILE_AMD64}" ]] && DEB_ARCHS="amd64"
+          [[ -f "${DEB_FILE_ARM64}" ]] && DEB_ARCHS="${DEB_ARCHS:+${DEB_ARCHS}, }arm64"
           RPM_ARCHS=""
-          [ -f "$RPM_FILE_X86_64" ] && RPM_ARCHS="x86_64"
-          [ -f "$RPM_FILE_AARCH64" ] && RPM_ARCHS="${RPM_ARCHS:+$RPM_ARCHS, }aarch64"
+          [[ -f "${RPM_FILE_X86_64}" ]] && RPM_ARCHS="x86_64"
+          [[ -f "${RPM_FILE_AARCH64}" ]] && RPM_ARCHS="${RPM_ARCHS:+${RPM_ARCHS}, }aarch64"
           PACMAN_ARCHS=""
-          [ -f "$PKG_FILE_X86_64" ] && PACMAN_ARCHS="x86_64"
-          [ -f "$PKG_FILE_AARCH64" ] && PACMAN_ARCHS="${PACMAN_ARCHS:+$PACMAN_ARCHS, }aarch64"
+          [[ -f "${PKG_FILE_X86_64}" ]] && PACMAN_ARCHS="x86_64"
+          [[ -f "${PKG_FILE_AARCH64}" ]] && PACMAN_ARCHS="${PACMAN_ARCHS:+${PACMAN_ARCHS}, }aarch64"
 
-          cat > "$REPO_DIR/badges/apt-repo.json" <<BADGE_EOF
+          cat > "${REPO_DIR}/badges/apt-repo.json" <<BADGE_EOF
           {
             "schemaVersion": 1,
             "label": "APT repo",
@@ -2429,7 +2471,7 @@ jobs:
           }
           BADGE_EOF
 
-          cat > "$REPO_DIR/badges/rpm-repo.json" <<BADGE_EOF
+          cat > "${REPO_DIR}/badges/rpm-repo.json" <<BADGE_EOF
           {
             "schemaVersion": 1,
             "label": "RPM repo",
@@ -2439,7 +2481,7 @@ jobs:
           BADGE_EOF
 
           # pacman repo badge - README references badges/pacman-repo.json.
-          cat > "$REPO_DIR/badges/pacman-repo.json" <<BADGE_EOF
+          cat > "${REPO_DIR}/badges/pacman-repo.json" <<BADGE_EOF
           {
             "schemaVersion": 1,
             "label": "pacman repo",
@@ -2450,9 +2492,11 @@ jobs:
 
           # AppImage badge — detect from release-files
           APPIMAGE_ARCHS=""
-          ls release-files/Claude_Desktop-*-x86_64.AppImage >/dev/null 2>&1 && APPIMAGE_ARCHS="x86_64"
-          ls release-files/Claude_Desktop-*-aarch64.AppImage >/dev/null 2>&1 && APPIMAGE_ARCHS="${APPIMAGE_ARCHS:+$APPIMAGE_ARCHS, }aarch64"
-          cat > "$REPO_DIR/badges/appimage.json" <<BADGE_EOF
+          APPIMAGE_X86_FILES=(release-files/Claude_Desktop-*-x86_64.AppImage)
+          APPIMAGE_ARM_FILES=(release-files/Claude_Desktop-*-aarch64.AppImage)
+          [[ -f "${APPIMAGE_X86_FILES[0]}" ]] && APPIMAGE_ARCHS="x86_64"
+          [[ -f "${APPIMAGE_ARM_FILES[0]}" ]] && APPIMAGE_ARCHS="${APPIMAGE_ARCHS:+${APPIMAGE_ARCHS}, }aarch64"
+          cat > "${REPO_DIR}/badges/appimage.json" <<BADGE_EOF
           {
             "schemaVersion": 1,
             "label": "AppImage",
@@ -2462,7 +2506,7 @@ jobs:
           BADGE_EOF
 
           # Nix flake badge — always built if we got here
-          cat > "$REPO_DIR/badges/nix.json" <<BADGE_EOF
+          cat > "${REPO_DIR}/badges/nix.json" <<BADGE_EOF
           {
             "schemaVersion": 1,
             "label": "Nix flake",
@@ -2474,19 +2518,20 @@ jobs:
           # The transitional claude-desktop-bin dummy goes through the same
           # assembly so it enters the Packages index (deb/all/) and existing
           # installs migrate on `apt upgrade`. Retire with the transition window.
-          DEB_FILE_TRANSITIONAL="$(pwd)/release-files/claude-desktop-bin_${VERSION}-${PKGREL}_all.deb"
-          for DEB_FILE in "$DEB_FILE_AMD64" "$DEB_FILE_ARM64" "$DEB_FILE_TRANSITIONAL"; do
-            if [ -f "$DEB_FILE" ]; then
-              bash packaging/apt/update-apt-repo.sh "$DEB_FILE" "$REPO_DIR" "$GPG_KEY_ID"
+          DEB_FILE_TRANSITIONAL="${PWD}/release-files/claude-desktop-bin_${VERSION}-${PKGREL}_all.deb"
+          for DEB_FILE in "${DEB_FILE_AMD64}" "${DEB_FILE_ARM64}" "${DEB_FILE_TRANSITIONAL}"; do
+            if [[ -f "${DEB_FILE}" ]]; then
+              bash packaging/apt/update-apt-repo.sh "${DEB_FILE}" "${REPO_DIR}" "${GPG_KEY_ID}"
             else
-              echo "::warning::$(basename "$DEB_FILE") not found — skipping"
+              DEB_BASENAME=$(basename "${DEB_FILE}")
+              echo "::warning::${DEB_BASENAME} not found — skipping"
             fi
           done
 
           # Package the gh-pages content as an artifact for the RPM job to finalize.
           # Do NOT push here — the deploy-rpm-repo job will add RPMs and do the
           # single push, avoiding two Pages deployments and CDN race conditions.
-          tar -czf /tmp/gh-pages-content.tar.gz -C "$REPO_DIR" .
+          tar -czf /tmp/gh-pages-content.tar.gz -C "${REPO_DIR}" .
           echo "pages_ready=true" >> "${GITHUB_OUTPUT}"
 
       - name: Upload gh-pages content
@@ -2510,11 +2555,11 @@ jobs:
             if wget -q -O /tmp/verify-tarball.tar.gz "${URL}" 2>/dev/null; then
               break
             fi
-            echo "Attempt $i failed, waiting 10s..."
+            echo "Attempt ${i} failed, waiting 10s..."
             sleep 10
           done
 
-          if [ ! -f /tmp/verify-tarball.tar.gz ]; then
+          if [[ ! -f /tmp/verify-tarball.tar.gz ]]; then
             echo "::error::Failed to download release tarball after 5 attempts"
             exit 1
           fi
@@ -2522,7 +2567,7 @@ jobs:
           ACTUAL_SHA=$(sha256sum /tmp/verify-tarball.tar.gz | cut -d' ' -f1)
           rm -f /tmp/verify-tarball.tar.gz
 
-          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+          if [[ "${ACTUAL_SHA}" != "${EXPECTED_SHA}" ]]; then
             echo "::error::SHA256 MISMATCH! Expected: ${EXPECTED_SHA}, Got: ${ACTUAL_SHA}"
             echo "The published tarball does not match what we built - aborting before the master-branch commits."
             exit 1
@@ -2548,11 +2593,11 @@ jobs:
             if wget -q -O /tmp/nix-tarball.tar.gz "${NIX_URL}" 2>/dev/null; then
               break
             fi
-            echo "Attempt $i failed, waiting 10s..."
+            echo "Attempt ${i} failed, waiting 10s..."
             sleep 10
           done
 
-          if [ ! -f /tmp/nix-tarball.tar.gz ]; then
+          if [[ ! -f /tmp/nix-tarball.tar.gz ]]; then
             echo "::error::Failed to download tarball from Nix URL after 5 attempts"
             exit 1
           fi
@@ -2562,7 +2607,7 @@ jobs:
           h = hashlib.sha256(open('/tmp/nix-tarball.tar.gz','rb').read()).digest()
           print('sha256-' + base64.b64encode(h).decode())
           ")
-          echo "released_nix_hash=${RELEASED_NIX_HASH}" >> $GITHUB_OUTPUT
+          echo "released_nix_hash=${RELEASED_NIX_HASH}" >> "${GITHUB_OUTPUT}"
 
           rm -f /tmp/nix-tarball.tar.gz
           echo "Nix SRI hash (from ${TAG} release): ${RELEASED_NIX_HASH}"
@@ -2596,9 +2641,9 @@ jobs:
           PKGREL: ${{ needs.check-version.outputs.pkgrel }}
           NIX_HASH: ${{ steps.nix-hash.outputs.released_nix_hash }}
         run: |
-          sed -i -E "s|version = \"[^\"]+\"|version = \"$VERSION\"|" packaging/nix/package.nix
-          sed -i -E "s|pkgrel = \"[0-9]+\"|pkgrel = \"$PKGREL\"|" packaging/nix/package.nix
-          sed -i -E "s|hash = \"sha256-[^\"]+\"|hash = \"$NIX_HASH\"|" packaging/nix/package.nix
+          sed -i -E "s|version = \"[^\"]+\"|version = \"${VERSION}\"|" packaging/nix/package.nix
+          sed -i -E "s|pkgrel = \"[0-9]+\"|pkgrel = \"${PKGREL}\"|" packaging/nix/package.nix
+          sed -i -E "s|hash = \"sha256-[^\"]+\"|hash = \"${NIX_HASH}\"|" packaging/nix/package.nix
 
           # Record the released version as the one our patches/docs are validated
           # against. Without this, version-check.yml keeps re-detecting a "new"
@@ -2628,17 +2673,17 @@ jobs:
           TAG: ${{ needs.check-version.outputs.tag }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git config --global user.name "$AUR_USERNAME"
-          git config --global user.email "$AUR_EMAIL"
+          git config --global user.name "${AUR_USERNAME}"
+          git config --global user.email "${AUR_EMAIL}"
 
           for i in 1 2 3; do
             git clone ssh://aur@aur.archlinux.org/claude-desktop-extra.git aur-repo && break
             rm -rf aur-repo
-            if [ "$i" = 3 ]; then
+            if [[ "${i}" = 3 ]]; then
               echo "::error::AUR clone failed after 3 attempts"
               exit 1
             fi
-            echo "AUR clone failed (attempt $i/3), retrying in 30s..."
+            echo "AUR clone failed (attempt ${i}/3), retrying in 30s..."
             sleep 30
           done
 
@@ -2650,7 +2695,7 @@ jobs:
           # guarantees the AUR content matches the published assets exactly.
           # (GitHub stores .SRCINFO as the asset name default.SRCINFO.)
           mkdir -p aur-src
-          gh release download "$TAG" --dir aur-src --clobber \
+          gh release download "${TAG}" --dir aur-src --clobber \
             -p PKGBUILD -p default.SRCINFO -p claude-desktop-extra.install
           cp aur-src/PKGBUILD aur-repo/PKGBUILD
           cp aur-src/default.SRCINFO aur-repo/.SRCINFO
@@ -2665,11 +2710,11 @@ jobs:
                 echo "Successfully pushed claude-desktop-extra to AUR"
                 break
               fi
-              if [ "$i" = 3 ]; then
+              if [[ "${i}" = 3 ]]; then
                 echo "::error::AUR push failed after 3 attempts"
                 exit 1
               fi
-              echo "AUR push failed (attempt $i/3), retrying in 30s..."
+              echo "AUR push failed (attempt ${i}/3), retrying in 30s..."
               sleep 30
             done
           }
@@ -2718,32 +2763,32 @@ jobs:
           GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
           VERSION: ${{ needs.check-version.outputs.version }}
         run: |
-          if [ -z "$GPG_PRIVATE_KEY" ]; then
+          if [[ -z "${GPG_PRIVATE_KEY}" ]]; then
             echo "::error::APT_GPG_PRIVATE_KEY is required for RPM repository deployment"
             exit 1
           fi
 
           # Import GPG key
-          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
-          GPG_KEY_ID=$(echo "$GPG_PRIVATE_KEY" | gpg --show-keys --with-colons 2>/dev/null \
+          echo "${GPG_PRIVATE_KEY}" | gpg --batch --import
+          GPG_KEY_ID=$(echo "${GPG_PRIVATE_KEY}" | gpg --show-keys --with-colons 2>/dev/null \
             | grep '^sec:' | head -1 | cut -d: -f5)
-          gpg --armor --export "$GPG_KEY_ID" > /tmp/gpg-key.asc
+          gpg --armor --export "${GPG_KEY_ID}" > /tmp/gpg-key.asc
 
           # Restore gh-pages content from release job (APT repo + static files)
           REPO_DIR="/tmp/gh-pages-repo"
-          rm -rf "$REPO_DIR"
-          mkdir -p "$REPO_DIR"
-          tar -xzf /tmp/gh-pages-content.tar.gz -C "$REPO_DIR"
-          rm -rf "$REPO_DIR/.git"
+          rm -rf "${REPO_DIR}"
+          mkdir -p "${REPO_DIR}"
+          tar -xzf /tmp/gh-pages-content.tar.gz -C "${REPO_DIR}"
+          rm -rf "${REPO_DIR}/.git"
 
           # Copy GPG public key
-          cp /tmp/gpg-key.asc "$REPO_DIR/gpg-key.asc"
+          cp /tmp/gpg-key.asc "${REPO_DIR}/gpg-key.asc"
 
           # Sign and add each RPM to the repository
           echo "RPM files found:"
           find rpm-files/ -name '*.rpm' -type f
           find rpm-files/ -name '*.rpm' -type f | while read -r RPM_FILE; do
-            bash packaging/rpm/update-rpm-repo.sh "$RPM_FILE" "$REPO_DIR" "$GPG_KEY_ID"
+            bash packaging/rpm/update-rpm-repo.sh "${RPM_FILE}" "${REPO_DIR}" "${GPG_KEY_ID}"
           done
 
       - name: Upload Pages artifact
@@ -2788,7 +2833,7 @@ jobs:
           GH_TOKEN: ${{ secrets.LEGACY_MIRROR_TOKEN }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          if [ -z "$GH_TOKEN" ]; then
+          if [[ -z "${GH_TOKEN}" ]]; then
             echo "LEGACY_MIRROR_TOKEN not set - legacy Pages mirror disabled, skipping"
             exit 0
           fi
@@ -2865,12 +2910,12 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           # If a PR branch for this version already exists, don't duplicate it.
-          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+          if git ls-remote --exit-code --heads origin "${BRANCH}" >/dev/null 2>&1; then
             echo "::notice::Branch ${BRANCH} already exists — skipping (PR already open)"
             exit 0
           fi
 
-          git checkout -b "$BRANCH"
+          git checkout -b "${BRANCH}"
 
           # 1. Bump the tracked upstream version (silences version-check.yml).
           echo "${VERSION}" > .upstream-version
@@ -2878,7 +2923,7 @@ jobs:
           # 2. Pre-update the Nix version + hash to the locally-built tarball hash.
           #    (The release job recomputes from the published asset; this keeps the
           #    PR self-consistent so reviewers see the intended values.)
-          if [ -n "${NIX_HASH}" ]; then
+          if [[ -n "${NIX_HASH}" ]]; then
             sed -i -E "s|version = \"[^\"]+\"|version = \"${VERSION}\"|" packaging/nix/package.nix
             sed -i -E "s|hash = \"sha256-[^\"]+\"|hash = \"${NIX_HASH}\"|" packaging/nix/package.nix
           fi
@@ -2900,15 +2945,15 @@ jobs:
             echo ""
             echo "Review the patch validation, then merge + run Build & Release"
             echo "(workflow_dispatch, auto_pr unset) to publish."
-          } > "$COMMIT_MSG"
-          git commit -F "$COMMIT_MSG"
-          rm -f "$COMMIT_MSG"
+          } > "${COMMIT_MSG}"
+          git commit -F "${COMMIT_MSG}"
+          rm -f "${COMMIT_MSG}"
 
-          git push origin "$BRANCH"
+          git push origin "${BRANCH}"
 
           gh pr create \
             --base master \
-            --head "$BRANCH" \
+            --head "${BRANCH}" \
             --title "Upstream bump to v${VERSION}" \
             --body "Automated by version-check.yml after a clean build from the official Linux .deb (v${VERSION}). All build + packaging + validation jobs passed. Merge, then run **Build & Release** (workflow_dispatch, leave \`auto_pr\` unchecked) to publish the release." \
             || echo "::warning::gh pr create failed (branch pushed; open the PR manually)"
@@ -2947,15 +2992,15 @@ jobs:
         run: |
           NUMBERS=$(gh issue list --label "new-version" --state open \
             --search "New Claude Desktop v${VERSION}" --json number --jq '.[].number')
-          if [ -z "$NUMBERS" ]; then
+          if [[ -z "${NUMBERS}" ]]; then
             echo "No open new-version issue for v${VERSION} - nothing to close."
             exit 0
           fi
-          for N in $NUMBERS; do
-            gh issue close "$N" --comment \
+          while IFS= read -r N; do
+            gh issue close "${N}" --comment \
               "v${VERSION} was released automatically: all patches applied cleanly against the new upstream .deb, validation + smoke test passed, packages published, and \`.upstream-version\` was bumped by the release job. No manual action was needed. ([run](${RUN_URL}))"
             echo "Closed issue #${N}"
-          done
+          done <<< "${NUMBERS}"
 
   notify-version-issue-failure:
     needs: [
@@ -2991,13 +3036,13 @@ jobs:
           VERSION: ${{ needs.check-version.outputs.version || github.event.inputs.deb_version }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          if [ -z "$VERSION" ]; then
+          if [[ -z "${VERSION}" ]]; then
             echo "No version resolved - skipping issue comment."
             exit 0
           fi
           NUMBERS=$(gh issue list --label "new-version" --state open \
             --search "New Claude Desktop v${VERSION}" --json number --jq '.[].number')
-          if [ -z "$NUMBERS" ]; then
+          if [[ -z "${NUMBERS}" ]]; then
             echo "No open new-version issue for v${VERSION} - nothing to comment on."
             exit 0
           fi
@@ -3008,7 +3053,7 @@ jobs:
             echo ""
             echo "The 2-hourly version check will NOT retry while this issue stays open; a successful release run closes it automatically."
           } > /tmp/failure-comment.md
-          for N in $NUMBERS; do
-            gh issue comment "$N" --body-file /tmp/failure-comment.md
+          while IFS= read -r N; do
+            gh issue comment "${N}" --body-file /tmp/failure-comment.md
             echo "Commented on issue #${N}"
-          done
+          done <<< "${NUMBERS}"

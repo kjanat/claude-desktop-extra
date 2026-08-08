@@ -30,8 +30,8 @@ jobs:
             cat /tmp/poll.err >&2 || true
             exit 0
           fi
-          VERSION=$(echo "$VERSION" | tr -d '[:space:]')
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          VERSION=$(echo "${VERSION}" | tr -d '[:space:]')
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
           echo "Upstream version (apt): ${VERSION}"
 
       - name: Get current tracked version
@@ -41,12 +41,12 @@ jobs:
           # .upstream-version tracks which Claude Desktop version our patches &
           # docs were last validated against. Bump + commit it once a version is
           # handled - even a trivial build bump - to silence the issue.
-          if [ -f .upstream-version ]; then
+          if [[ -f .upstream-version ]]; then
             CURRENT=$(tr -d '[:space:]' < .upstream-version)
           else
             CURRENT=""
           fi
-          echo "version=${CURRENT}" >> "$GITHUB_OUTPUT"
+          echo "version=${CURRENT}" >> "${GITHUB_OUTPUT}"
           echo "Current tracked version: ${CURRENT}"
 
       - name: Ensure new-version label exists
@@ -75,7 +75,7 @@ jobs:
             --json number \
             --jq 'length')
 
-          echo "count=${ISSUE_COUNT}" >> "$GITHUB_OUTPUT"
+          echo "count=${ISSUE_COUNT}" >> "${GITHUB_OUTPUT}"
           echo "Open issues for v${UPSTREAM}: ${ISSUE_COUNT}"
 
       - name: Render issue body from template
@@ -92,20 +92,20 @@ jobs:
           TEMPLATE=".github/issue-templates/new-version-body.md"
 
           # Substitute simple placeholders
-          BODY=$(cat "$TEMPLATE")
+          BODY=$(cat "${TEMPLATE}")
           BODY="${BODY//\{\{UPSTREAM\}\}/${UPSTREAM}}"
           BODY="${BODY//\{\{TRACKED\}\}/${TRACKED}}"
           BODY="${BODY//\{\{REPO\}\}/${REPO}}"
 
           # Inject CC_PROMPT (multi-line): split at marker, reassemble with file content
-          BEFORE=$(echo "$BODY" | sed '/{{CC_PROMPT}}/Q')
-          AFTER=$(echo "$BODY" | sed '1,/{{CC_PROMPT}}/d')
+          BEFORE=$(echo "${BODY}" | sed '/{{CC_PROMPT}}/Q')
+          AFTER=$(echo "${BODY}" | sed '1,/{{CC_PROMPT}}/d')
           CC_CONTENT=$(cat UPDATE-PROMPT-CC-INPUT-MANUAL.md)
 
           {
-            echo "$BEFORE"
-            echo "$CC_CONTENT"
-            echo "$AFTER"
+            echo "${BEFORE}"
+            echo "${CC_CONTENT}"
+            echo "${AFTER}"
           } > /tmp/issue-body.md
 
       - name: Create notification issue
@@ -166,7 +166,7 @@ jobs:
           UPSTREAM: ${{ steps.upstream.outputs.version }}
           TRACKED: ${{ steps.tracked.outputs.version }}
         run: |
-          if [ "${TRACKED}" = "${UPSTREAM}" ]; then
+          if [[ "${TRACKED}" == "${UPSTREAM}" ]]; then
             COLOR="brightgreen"
             MESSAGE="v${TRACKED} (latest)"
           else
@@ -176,7 +176,7 @@ jobs:
 
           REMOTE="https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
           REPO_DIR="/tmp/gh-pages-badge"
-          rm -rf "$REPO_DIR"
+          rm -rf "${REPO_DIR}"
 
           # Probe for the gh-pages branch, distinguishing "branch missing"
           # (bootstrap it) from "ls-remote failed" (transient GitHub error,
@@ -185,27 +185,27 @@ jobs:
           # root-commit push was then rejected non-fast-forward.
           LSOUT=""
           for i in 1 2 3; do
-            if LSOUT=$(git ls-remote --heads "$REMOTE" gh-pages); then
+            if LSOUT=$(git ls-remote --heads "${REMOTE}" gh-pages); then
               break
             fi
-            if [ "$i" = 3 ]; then
+            if [[ "${i}" == 3 ]]; then
               echo "::error::git ls-remote failed 3 times - cannot tell whether gh-pages exists, refusing to bootstrap. Next scheduled run retries."
               exit 1
             fi
-            echo "ls-remote failed (attempt $i/3), retrying in 15s..."
+            echo "ls-remote failed (attempt ${i}/3), retrying in 15s..."
             sleep 15
           done
 
-          if echo "$LSOUT" | grep -q gh-pages; then
-            git clone --depth 1 --branch gh-pages "$REMOTE" "$REPO_DIR"
+          if echo "${LSOUT}" | grep -q gh-pages; then
+            git clone --depth 1 --branch gh-pages "${REMOTE}" "${REPO_DIR}"
           else
-            mkdir -p "$REPO_DIR" && cd "$REPO_DIR"
-            git init && git checkout -b gh-pages && git remote add origin "$REMOTE"
+            mkdir -p "${REPO_DIR}" && cd "${REPO_DIR}"
+            git init && git checkout -b gh-pages && git remote add origin "${REMOTE}"
             cd -
           fi
 
-          mkdir -p "$REPO_DIR/badges"
-          cat > "$REPO_DIR/badges/version-check.json" <<BADGE_EOF
+          mkdir -p "${REPO_DIR}/badges"
+          cat > "${REPO_DIR}/badges/version-check.json" <<BADGE_EOF
           {
             "schemaVersion": 1,
             "label": "Claude Desktop",
@@ -215,10 +215,10 @@ jobs:
           BADGE_EOF
 
           # Seed APT/RPM badges from repo contents (if not yet present)
-          if [ ! -f "$REPO_DIR/badges/apt-repo.json" ] && [ -f "$REPO_DIR/deb/Packages" ]; then
-            DEB_VER=$(grep -m1 '^Version:' "$REPO_DIR/deb/Packages" | awk '{print $2}' | cut -d- -f1)
-            DEB_ARCHS=$(grep '^Architecture:' "$REPO_DIR/deb/Packages" | awk '{print $2}' | sort -u | paste -sd', ')
-            cat > "$REPO_DIR/badges/apt-repo.json" <<BADGE_EOF
+          if [[ ! -f "${REPO_DIR}/badges/apt-repo.json" && -f "${REPO_DIR}/deb/Packages" ]]; then
+            DEB_VER=$(grep -m1 '^Version:' "${REPO_DIR}/deb/Packages" | awk '{print $2}' | cut -d- -f1)
+            DEB_ARCHS=$(grep '^Architecture:' "${REPO_DIR}/deb/Packages" | awk '{print $2}' | sort -u | paste -sd', ')
+            cat > "${REPO_DIR}/badges/apt-repo.json" <<BADGE_EOF
           {
             "schemaVersion": 1,
             "label": "APT repo",
@@ -228,12 +228,14 @@ jobs:
           BADGE_EOF
           fi
 
-          if [ ! -f "$REPO_DIR/badges/rpm-repo.json" ] && [ -d "$REPO_DIR/rpm" ]; then
+          if [[ ! -f "${REPO_DIR}/badges/rpm-repo.json" && -d "${REPO_DIR}/rpm" ]]; then
             RPM_ARCHS=""
-            [ -d "$REPO_DIR/rpm/x86_64" ] && RPM_ARCHS="x86_64"
-            [ -d "$REPO_DIR/rpm/aarch64" ] && RPM_ARCHS="${RPM_ARCHS:+$RPM_ARCHS, }aarch64"
-            RPM_VER=$(ls "$REPO_DIR/rpm/x86_64/" 2>/dev/null | head -1 | grep -oP '\d+\.\d+\.\d+' || echo "${TRACKED}")
-            cat > "$REPO_DIR/badges/rpm-repo.json" <<BADGE_EOF
+            [[ -d "${REPO_DIR}/rpm/x86_64" ]] && RPM_ARCHS="x86_64"
+            [[ -d "${REPO_DIR}/rpm/aarch64" ]] && RPM_ARCHS="${RPM_ARCHS:+${RPM_ARCHS}, }aarch64"
+            RPM_FILES=("${REPO_DIR}"/rpm/x86_64/*)
+            RPM_FILE="${RPM_FILES[0]##*/}"
+            RPM_VER=$(grep -oP '\d+\.\d+\.\d+' <<< "${RPM_FILE}" || echo "${TRACKED}")
+            cat > "${REPO_DIR}/badges/rpm-repo.json" <<BADGE_EOF
           {
             "schemaVersion": 1,
             "label": "RPM repo",
@@ -244,15 +246,15 @@ jobs:
           fi
 
           # Seed AppImage/Nix badges from GitHub release assets (if not yet present)
-          if [ ! -f "$REPO_DIR/badges/appimage.json" ] || [ ! -f "$REPO_DIR/badges/nix.json" ]; then
-            ASSETS=$(gh release view -R "$GITHUB_REPOSITORY" \
+          if [[ ! -f "${REPO_DIR}/badges/appimage.json" || ! -f "${REPO_DIR}/badges/nix.json" ]]; then
+            ASSETS=$(gh release view -R "${GITHUB_REPOSITORY}" \
               --json assets --jq '.assets[].name' 2>/dev/null || true)
 
-            if [ ! -f "$REPO_DIR/badges/appimage.json" ] && echo "$ASSETS" | grep -q '\.AppImage$'; then
+            if [[ ! -f "${REPO_DIR}/badges/appimage.json" ]] && echo "${ASSETS}" | grep -q '\.AppImage$'; then
               APPIMAGE_ARCHS=""
-              echo "$ASSETS" | grep -q 'x86_64\.AppImage$' && APPIMAGE_ARCHS="x86_64"
-              echo "$ASSETS" | grep -q 'aarch64\.AppImage$' && APPIMAGE_ARCHS="${APPIMAGE_ARCHS:+$APPIMAGE_ARCHS, }aarch64"
-              cat > "$REPO_DIR/badges/appimage.json" <<BADGE_EOF
+              echo "${ASSETS}" | grep -q 'x86_64\.AppImage$' && APPIMAGE_ARCHS="x86_64"
+              echo "${ASSETS}" | grep -q 'aarch64\.AppImage$' && APPIMAGE_ARCHS="${APPIMAGE_ARCHS:+${APPIMAGE_ARCHS}, }aarch64"
+              cat > "${REPO_DIR}/badges/appimage.json" <<BADGE_EOF
           {
             "schemaVersion": 1,
             "label": "AppImage",
@@ -262,8 +264,8 @@ jobs:
           BADGE_EOF
             fi
 
-            if [ ! -f "$REPO_DIR/badges/nix.json" ]; then
-              cat > "$REPO_DIR/badges/nix.json" <<BADGE_EOF
+            if [[ ! -f "${REPO_DIR}/badges/nix.json" ]]; then
+              cat > "${REPO_DIR}/badges/nix.json" <<BADGE_EOF
           {
             "schemaVersion": 1,
             "label": "Nix flake",
@@ -274,7 +276,7 @@ jobs:
             fi
           fi
 
-          cd "$REPO_DIR"
+          cd "${REPO_DIR}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add badges/
