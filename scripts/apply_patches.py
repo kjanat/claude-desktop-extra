@@ -205,6 +205,45 @@ def run_nim_patch(nim_bin: Path, target_file: Path) -> bool:
         return False
 
 
+def syntax_check(written: list[Path], app_dir: Path) -> bool:
+    """node --check every written JS file; False if any fails.
+
+    A patch can apply cleanly (all counts satisfied) and still emit broken
+    JS - v1.25927.0 shipped two splices that closed a backtick template
+    literal with a `"`, unterminating it. The Electron smoke test does not
+    load lazily-required chunks, so a SyntaxError in one would reach users
+    without this gate. node is guaranteed present wherever this script
+    runs: extracting/repacking app.asar already requires the node-based
+    asar CLI.
+    """
+    node = shutil.which("node")
+    if node is None:
+        print(
+            "[ERROR] node not found on PATH - cannot syntax-check patched "
+            "bundle files. Install Node.js (the build already needs it for "
+            "asar).",
+            file=sys.stderr,
+        )
+        return False
+    ok = True
+    checked = 0
+    for path in written:
+        if path.suffix not in (".js", ".mjs"):
+            continue
+        checked += 1
+        proc = subprocess.run([node, "--check", str(path)], capture_output=True)
+        if proc.returncode != 0:
+            ok = False
+            print(
+                f"  [FAIL] syntax check: {path.relative_to(app_dir)}\n"
+                f"{proc.stderr.decode(errors='replace')}",
+                file=sys.stderr,
+            )
+    status = "[OK]" if ok else "[FAIL]"
+    print(f"  {status} node --check on {checked} patched file(s)")
+    return ok
+
+
 def main():
     if len(sys.argv) != 3:
         print("Usage: apply_patches.py <patches_dir> <app_dir>", file=sys.stderr)
@@ -312,6 +351,7 @@ def main():
     # Apply Nim patches, grouped by target file
     # Stage each target on tmpfs for speed
     staging_root = None  # Could use /dev/shm if available
+    written_files: list[Path] = []
     for target_path, patches in nim_jobs_by_target.items():
         rel = target_path.relative_to(app_dir)
         parts = chunk_parts(target_path)
@@ -342,8 +382,11 @@ def main():
                     if not split_and_write(staged.read_bytes(), parts):
                         failed = True
                         print(f"  [SKIP-WRITE] {rel} chunk split failed")
+                    else:
+                        written_files.extend(parts)
                 else:
                     shutil.copy(staged, target_path)
+                    written_files.append(target_path)
             else:
                 print(f"  [SKIP-WRITE] {rel} not updated due to patch failure")
         finally:
@@ -351,6 +394,11 @@ def main():
                 staged.unlink()
             except FileNotFoundError:
                 pass
+
+    if not failed and written_files:
+        print(f"\n=== Syntax check ({len(written_files)} written file(s)) ===")
+        if not syntax_check(written_files, app_dir):
+            failed = True
 
     if failed:
         print("\n[ERROR] One or more patches failed", file=sys.stderr)

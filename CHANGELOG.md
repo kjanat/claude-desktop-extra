@@ -10,7 +10,7 @@ Upstream's v1.25927.0 re-minify broke most patches at once. (v1.26832.0 shipped 
 
 The orchestrator and `validate-patches.sh` now stage every `index*.chunk-*.js` group, and every affected patch pattern tolerates both quote styles. A handful of patches needed real rewrites for upstream refactors: the suppressed renderer-death log now fires unconditionally on `reason==="killed"` (the separate silent branch it used to hook is gone), open-in-editor's detection collapsed from seven per-editor call sites into one shared loop, and the tray-icon override follows the icon variable into a shared `let` declaration.
 
-Validated against a real v1.25927.0 extract: all 46 patches apply, all 10 feature-test harnesses pass, and every split-back bundle file passes `node --check` - that last gate caught two splices that applied cleanly but emitted a `"` where the surrounding literal was a backtick.
+Validated against a real v1.25927.0 extract: all 46 patches apply, all 10 feature-test harnesses pass, and every split-back bundle file passes `node --check` - that last gate caught two splices that applied cleanly but emitted a `"` where the surrounding literal was a backtick. The orchestrator now runs that syntax check itself on every file it writes, so a patch that applies cleanly but emits broken JS fails the build instead of shipping - the Electron smoke test never loads lazily-required chunks, so it cannot catch this class.
 
 ## 2026-08-07
 
