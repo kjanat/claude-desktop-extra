@@ -71,9 +71,9 @@ Copy-paste this into Claude Code when a new version is available:
 >
 > 4. For each failing patch:
 >    - Use `rg` to find the new code pattern in the extracted JS
->    - Update the regex in `patches/*.nim` — use `\w+` (or `[\w$]+` if the minified name can start with `$`) for variable names
+>    - Update the regex in `patches/*/*.nim` - use `\w+` (or `[\w$]+` if the minified name can start with `$`) for variable names
 >    - Recompile: `cd patches && make PATCH_NAME && cd ..`
->    - Test the individual patch: `patches/PATCH_NAME /tmp/test_index.js`
+>    - Test the individual patch: `patches/<group>/PATCH_NAME /tmp/test_index.js`
 >    - Verify syntax: `node --check /tmp/test_index.js`
 >
 > 5. Rebuild (re-run same build script from step 2)
@@ -81,7 +81,7 @@ Copy-paste this into Claude Code when a new version is available:
 > 6. Verify all patches pass and JS syntax is valid:
 >    ```bash
 >    # Count patches (should match build output)
->    ls patches/*.nim | wc -l
+>    ls patches/*/*.nim | wc -l
 >    ```
 >
 > 7. Run the Feature Flag Audit (Prompt 3) to check for new/changed flags
@@ -95,7 +95,7 @@ Copy-paste this into Claude Code when a new version is available:
 >    - `baseline/CLAUDE_FEATURE_FLAGS.md` — if flags added/removed/renamed
 >    - `baseline/CLAUDE_BUILT_IN_MCP.md` — if MCP servers changed (check `registerInternalMcpServer` calls)
 >    - `CHANGELOG.md` — add new version entry
->    - `README.md` patch table — if patches added/removed/changed
+>    - `PATCHES.md` patch tables - if patches added/removed/changed (the README keeps only the per-directory counts)
 >    - `baseline/ION.md` — if ion-dist bundle stats, patterns, or config keys changed
 >    - **`.upstream-version` — bump to the new version (required).** This is what closes the auto-created "new version detected" issue and greens the README badge. `version-check.yml` compares the highest `Version:` in the official apt Packages index against this file; until they match, the issue is recreated every 2h. Bump it even for a trivial build bump with no public release.
 >
@@ -117,7 +117,7 @@ Copy-paste this into Claude Code to analyze what changed between two versions:
 >    - Old: `/tmp/claude-old/app/.vite/build/index.js`
 >    - New: `/tmp/claude-new/app/.vite/build/index.js`
 >
->    (If not yet extracted, extract them first using the steps in CLAUDE.md § "Extract and Test Locally".)
+>    (If not yet extracted, extract them first using the steps in AGENTS.md § "Extract and Test Locally".)
 >
 >    Since v1.19367.0 the main bundle is code-split: `index.js` is a loader stub and the
 >    code lives in `index.chunk-<hash>.js` siblings + `index.pre.js`. Wherever a command
@@ -314,7 +314,7 @@ Run this to answer *"is there anything new we could make Linux-compatible?"* wit
 >    ```
 >
 > 4. For each gate, classify against the baseline table:
->    - **PATCHED** → maps to a `patches/*.nim` area → skip
+>    - **PATCHED** → maps to a `patches/*/*.nim` area → skip
 >    - **NATIVE** → genuine Apple/Win API (`@ant/claude-swift`, Login Items, IOKit, XPC, BLE pairing) → skip
 >    - **STUB** → hardcoded `!1`, prod-gate (`Em()`-style wrapper), or dev-prototype, disabled on ALL platforms → skip (nothing to enable)
 >    - **PORTABLE** → mac/win-only, no real native dep, not patched → **this is the only actionable class**
@@ -366,7 +366,7 @@ Minified names change every release. The pattern is always the same — just the
 
 | What changes | How to detect | Impact |
 |-------------|---------------|--------|
-| Minified variable names | Build fails — patch regex doesn't match | Update `\w+` patterns in `patches/*.nim`, recompile |
+| Minified variable names | Build fails - patch regex doesn't match | Update `\w+` patterns in `patches/*/*.nim`, recompile |
 | New platform gate (`darwin`/`win32`) | Prompt 2 step 2 — `process.platform` diff | New patch needed to add Linux support |
 | New feature flag | Prompt 3 — static registry diff | Add to `enable_local_agent_mode.nim` override |
 | Feature flag removed | Prompt 3 — flag missing from registry | Remove from override, update docs |
@@ -380,4 +380,4 @@ Minified names change every release. The pattern is always the same — just the
 
 ## Patch Reference
 
-See the **[Patches table in README.md](README.md#patches)** for the full list of all patches including break risk and debug `rg` patterns for finding new code when a patch fails.
+See **[PATCHES.md](PATCHES.md)** for the full list of all patches including break risk and debug `rg` patterns for finding new code when a patch fails.

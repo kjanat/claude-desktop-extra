@@ -65,6 +65,17 @@
       return ipcRenderer.invoke("cdb-glow:set", String(mode));
     },
 
+    // Theme picker (Ctrl+Shift+T). The window and the hotkey are owned by
+    // patches/community/add_feature_theme_picker.nim; these two channels only
+    // read and persist the pref, which that patch re-reads on every press.
+    // set() takes a plain boolean and the main side re-validates the type.
+    pickerRead: function () {
+      return ipcRenderer.invoke("cdb-picker:read");
+    },
+    pickerSet: function (enabled) {
+      return ipcRenderer.invoke("cdb-picker:set", enabled === true);
+    },
+
     // Diff view modes (the Code tab's diff-scope dropdown). BOTH channels are
     // owned by patches/add_feature_diff_views.nim, not by the settings patch:
     // that patch reads and writes `diffViewModes` and applies it live, the same
@@ -75,6 +86,17 @@
     },
     diffViewsSet: function (enabled) {
       return ipcRenderer.invoke("cdb-diff:pref-set", enabled === true);
+    },
+
+    // Panel tabs (the Code tab's side-panel tab strip). BOTH channels are owned
+    // by patches/add_feature_panel_tabs.nim, not by the settings patch - the same
+    // cross-patch arrangement as diffViewsRead/Set above. set() takes a plain
+    // boolean and the main side re-validates the type.
+    panelTabsRead: function () {
+      return ipcRenderer.invoke("cdb-tabs:pref-read");
+    },
+    panelTabsSet: function (enabled) {
+      return ipcRenderer.invoke("cdb-tabs:pref-set", enabled === true);
     },
 
     // Deployment mode (1P / 3P) and the third-party configuration the app boots

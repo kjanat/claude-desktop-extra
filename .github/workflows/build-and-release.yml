@@ -25,6 +25,11 @@ on:
         required: false
         type: string
         default: ""
+      skip_aur:
+        description: "Skip the AUR preflight + AUR push (use when the AUR is down for maintenance). All other channels publish normally; the AUR catches up automatically on the next non-skipped release."
+        required: false
+        type: boolean
+        default: false
 
 # Serialize release runs: all workflow_dispatch runs share ONE group with
 # cancel-in-progress off, so a second dispatch (e.g. version-check auto-release
@@ -412,6 +417,17 @@ jobs:
         run: |
           echo "=== Checking Nim patch syntax (compile check) ==="
           bash scripts/compile-nim-patches.sh
+
+      - name: Run feature test harnesses
+        run: |
+          # A clean patch run proves the patches APPLIED, not that the features
+          # BEHAVE. The harnesses under scripts/tests/{community,core}/ run the
+          # real injected engine (electron shimmed) and the real pages in the
+          # headless Chrome this runner already ships. They need no npm package;
+          # the main-process suites need the patch binaries the previous step
+          # just compiled, which is why this lands here and not in a job of its
+          # own. A harness that cannot find a tool exits 3 and is reported SKIP.
+          bash scripts/run-feature-tests.sh
 
       - name: Guard against sibling-file no-op patches
         run: |
@@ -1966,8 +1982,13 @@ jobs:
       # signed repos + Pages). AUR + legacy mirrors stay on upstream.
       # On the canonical repo, probe AUR BEFORE anything is published so a
       # down AUR (run 30741060085) does not half-deploy GH/Pages/pacman.
+      # For EXTENDED AUR outages, dispatch with skip_aur=true: the release
+      # publishes every other channel and the AUR (a secondary channel -
+      # the pacman repo in the release assets is primary) catches up on
+      # the next non-skipped release, since the AUR push diffs the
+      # PKGBUILD against whatever the AUR currently has.
       - name: Setup SSH for AUR
-        if: ${{ !github.event.repository.fork }}
+        if: ${{ !github.event.repository.fork && !inputs.skip_aur }}
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.AUR_SSH_KEY }}" > ~/.ssh/aur
@@ -1982,7 +2003,7 @@ jobs:
             >> ~/.ssh/config
 
       - name: Preflight - AUR reachable
-        if: ${{ !github.event.repository.fork }}
+        if: ${{ !github.event.repository.fork && !inputs.skip_aur }}
         run: |
           for i in 1 2 3; do
             if git ls-remote ssh://aur@aur.archlinux.org/claude-desktop-extra.git HEAD; then
@@ -2663,8 +2684,10 @@ jobs:
       # ── AUR publish (canonical repo only) ───────────────────────────
       # Forks skip this. On upstream: preflight already failed fast if
       # AUR is down; retries below ride out short blips.
+      # Skipped entirely (along with the preflight) when the run was
+      # dispatched with skip_aur=true during an extended AUR outage.
       - name: Push to AUR
-        if: ${{ !github.event.repository.fork }}
+        if: ${{ !github.event.repository.fork && !inputs.skip_aur }}
         env:
           AUR_USERNAME: ${{ secrets.AUR_USERNAME }}
           AUR_EMAIL: ${{ secrets.AUR_EMAIL }}
@@ -3049,7 +3072,7 @@ jobs:
           {
             echo "**Automatic release of v${VERSION} FAILED** - manual attention needed. ([failed run](${RUN_URL}))"
             echo ""
-            echo "Most likely cause: the upstream re-minify moved a patch anchor (fix the regex), or upstream natively implemented something we patch (then remove the patch or convert it to a regression guard - see CLAUDE.md, Patch Strictness Rules). Run the \`/update ${VERSION}\` skill in a Claude Code session in this repo, or follow the prompt in the issue body above."
+            echo "Most likely cause: the upstream re-minify moved a patch anchor (fix the regex), or upstream natively implemented something we patch (then remove the patch or convert it to a regression guard - see AGENTS.md, Patch Strictness Rules). Run the \`/update ${VERSION}\` skill in a Claude Code session in this repo, or follow the prompt in the issue body above."
             echo ""
             echo "The 2-hourly version check will NOT retry while this issue stays open; a successful release run closes it automatically."
           } > /tmp/failure-comment.md

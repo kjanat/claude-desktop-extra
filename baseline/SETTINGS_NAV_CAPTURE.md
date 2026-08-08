@@ -6,8 +6,11 @@ window. Trimmed to the structurally relevant parts; **every class string is verb
 This markup is served by the **remote claude.ai SPA**, not by the bundle we patch, so it can change
 without a Claude Desktop release. It is the ground truth for:
 
-- `js/extra_settings_page.js` - injects the "Extra" nav group (Themes + Features) into this dialog
-- `scripts/test-extra-settings-dom.mjs` - its fixtures are built from the shape below
+- `js/extra_settings_page.js` - injects the "Extra" nav group into this dialog: **Themes**,
+  **Community**, **Anthropic**, **Deployment**, in that order. The middle two are shortened
+  because this column truncates; each carries its full name ("Community Features" /
+  "Anthropic Features") as a `title` tooltip on the row and as its panel's `h1`
+- `scripts/tests/core/test-extra-settings-dom.mjs` - its fixtures are built from the shape below
 
 ## The facts the injection depends on
 
@@ -48,7 +51,7 @@ class counts only. Read it first; it names the anchor that was lost:
 
 Re-capture the nav (DevTools on the mainView, copy the `nav[aria-label="Settings"]` outer HTML plus the
 content pane's first two levels), update this file, then refit the fixtures in
-`scripts/test-extra-settings-dom.mjs` against it.
+`scripts/tests/core/test-extra-settings-dom.mjs` against it.
 
 ## Capture
 

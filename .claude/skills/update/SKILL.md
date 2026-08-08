@@ -29,16 +29,16 @@ Run the build for this OS (Arch here). It auto-downloads the latest official `.d
 ```
 If patches fail (upstream renamed identifiers / refactored / removed a feature):
 1. Get a clean unpatched extract (run `/fresh-upstream`, or it's already in `./tmp/app.asar.contents/.vite/build/`). The main bundle is code-split since v1.19367.0: `index.js` is a loader stub, the code lives in `index.chunk-<hash>.js` siblings (hashes change every release) + `index.pre.js`; `rg` across `index*.js`, not just `index.js`.
-2. For each failing patch, find the new pattern with `rg`, then fix `patches/<name>.nim` using `[\w$]+` + capture/replace. **Edit the `.js` in `js/`** for Computer Use / cowork-font (they're `staticRead` into the patch).
+2. For each failing patch, find the new pattern with `rg`, then fix `patches/<group>/<name>.nim` using `[\w$]+` + capture/replace. **Edit the `.js` in `js/`** for Computer Use / cowork-font (they're `staticRead` into the patch).
 3. Recompile + test one patch against the stub+chunks concatenation (what the orchestrator stages):
    ```bash
    cd patches && make <patch_name> && cd ..
    B=./tmp/app.asar.contents/.vite/build
    { cat $B/index.js; for c in $B/index.chunk-*.js; do printf '\n/*__CDB_SPLIT__%s__*/\n' "$(basename $c)"; cat "$c"; done; } > /tmp/test-index.js
-   patches/<patch_name> /tmp/test-index.js; echo "exit=$?"
+   patches/<group>/<patch_name> /tmp/test-index.js; echo "exit=$?"
    node --check /tmp/test-index.js
    ```
-4. Re-run the build until all patches pass. **Every sub-patch must succeed or `quit(1)`** - never `[WARN]`+continue. If a feature was upstreamed, **remove the patch** (`git rm`) - once nothing of ours is injected, a patch that only asserts upstream's own behavior is not maintaining our modification. See CLAUDE.md Rule 4/6. Pure assert-only regression-guard patches were retired 2026-07-15.
+4. Re-run the build until all patches pass. **Every sub-patch must succeed or `quit(1)`** - never `[WARN]`+continue. If a feature was upstreamed, **remove the patch** (`git rm`) - once nothing of ours is injected, a patch that only asserts upstream's own behavior is not maintaining our modification. See AGENTS.md Rule 4/6. Pure assert-only regression-guard patches were retired 2026-07-15.
 
 ## Step 2 - Linux-compat analysis (new gates?)
 Diff old vs new for newly darwin/win32-gated features that need Linux support (set `OLD`/`NEW` to the two index.js paths):
@@ -60,10 +60,10 @@ diff <(rg -o '\w+\("[0-9]{6,}"\)' "$OLD"|sort -u) <(rg -o '\w+\("[0-9]{6,}"\)' "
 ```
 Check `enable_local_agent_mode.nim`'s override list still covers the cowork/code flags and its Zod schema includes them. Update the doc + version-history table.
 
-Also refresh the flag catalog in `js/growthbook_overrides.js` (TEMPLATE): it lists every store-consulted flag of the audited version, commented out. Extract IDs with `rg -o '[\w$]+(?:\.[\w$]+)*\("([0-9]{6,10})"[,)]' -r '$1' <new-bundle-concat> | sort -u`, drop the IDs force-rewritten by patches (`rg -oI '"[0-9]{6,10}"' patches/*.nim`, minus IDs only mentioned in comments), and update descriptions + the version stamp in the header. Then regenerate the browsable copy and rebuild the binary:
+Also refresh the flag catalog in `js/growthbook_overrides.js` (TEMPLATE): it lists every store-consulted flag of the audited version, commented out. Extract IDs with `rg -o '[\w$]+(?:\.[\w$]+)*\("([0-9]{6,10})"[,)]' -r '$1' <new-bundle-concat> | sort -u`, drop the IDs force-rewritten by patches (`rg -oI '"[0-9]{6,10}"' patches/*/*.nim`, minus IDs only mentioned in comments), and update descriptions + the version stamp in the header. Then regenerate the browsable copy and rebuild the binary:
 ```bash
 node scripts/check-jsonc-template-sync.sh --write   # updates docs/claude-desktop-extra.jsonc
-touch patches/add_growthbook_overrides.nim && (cd patches && make)  # Makefile doesn't track staticRead deps
+touch patches/core/add_growthbook_overrides.nim && (cd patches && make)  # Makefile doesn't track staticRead deps
 ```
 CI runs `scripts/check-jsonc-template-sync.sh` (no `--write`) and fails if the docs catalog drifts from the shipped template.
 
@@ -80,7 +80,7 @@ Cowork now runs on the `.deb`'s bundled native VM backend (cowork-linux-helper +
 Update only what changed:
 - `CHANGELOG.md` - add the new entry (one `##` section per day, newest at top; informative not a debug log).
 - `baseline/CLAUDE_FEATURE_FLAGS.md`, `CLAUDE_BUILT_IN_MCP.md`, `ION.md`, `PLATFORM_GATE_BASELINE.md` - if their tracked internals moved.
-- `README.md` patch table - if patches added/removed/changed. **Do NOT touch README install-command version numbers** (CI updates those via `sed`; manual edits cause merge conflicts).
+- `PATCHES.md` patch tables - if patches added/removed/changed; the README's three-bullet summary carries the per-directory counts. **Do NOT touch README install-command version numbers** (CI updates those via `sed`; manual edits cause merge conflicts).
 
 ## Step 9 - bump .upstream-version (required) + commit
 ```bash

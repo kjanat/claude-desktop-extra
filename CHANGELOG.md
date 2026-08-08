@@ -2,6 +2,82 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-08-07
+
+### Settings → Extra: our switches and Anthropic's flags are now two separate pages
+
+The **Features** page held two unrelated things: the handful of optional features this project adds, and Anthropic's own 134 rollout flags. They are now one page each.
+
+**Community Features** holds our switches - Diff view modes, Panel tabs, Calm the Cowork glow, and the new Theme picker hotkey - and gains the same filter box the flag list has, so a growing list stays quick to search. **Anthropic Features** holds the upstream flag list, the per-flag overrides and the "changes require a restart" notice with its Restart now button, unchanged. Nav order is Themes, Community Features, Anthropic Features, Deployment. Like the other Extra pages, Community Features ends in a link to the config file behind it - the hand-edited `claude-desktop-extra.jsonc` wins over the switches per key.
+
+The new **Theme picker hotkey** switch (config key `themePicker`, on by default) turns the <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> gallery off for anyone who wants that shortcut back for something else. The theme list in Settings → Extra → Themes is unaffected.
+
+Nothing moves on disk: both `claude-desktop-extra.jsonc` (yours, wins) and `claude-desktop-extra.json` (written by the UI) keep the same keys in the same places.
+
+### The Cowork glow switch named the wrong config file
+
+When `coworkGlow` is set by hand, the switch locks itself and explains where the value came from - but it named `claude-desktop-bin.jsonc`, the filename from before the project was renamed. It now names `claude-desktop-extra.jsonc`, which is the file actually being read.
+
+### The README is an overview again; the details moved into their own files
+
+The README had grown to the point where finding out *what* the project offers meant scrolling past everything about *how* it works. It now carries a short teaser per feature and links onward.
+
+The patch catalog moved to [`PATCHES.md`](PATCHES.md), one table per directory, with every description tightened to one sentence saying what the patch does and why you would want it - the mechanism it depends on stays documented in the patch source, which each row now links to. Custom Themes, Multiple Profiles, Quick Entry, Cowork setup and Feature Flag Overrides each moved into `docs/`, following the pattern Computer Use already used. Every README heading stayed exactly where it was, so existing links into the README still land on the right section.
+
+Installation is now a list of collapsed per-distro sections - open the one you are on instead of scrolling past eight you are not. The badges at the top still jump straight to the right one. The hand-written table of contents is gone; GitHub's own outline button does the same job without going stale.
+
+### Patches are grouped by what they are for
+
+`patches/` was a flat directory of 45 `.nim` files where nothing distinguished a Linux bug fix from an optional feature. It is now three:
+
+- `patches/linux/` (32) - Linux compatibility. Always on, nothing to configure.
+- `patches/community/` (6) - optional features, each with a switch in Settings → Extra → Community Features.
+- `patches/core/` (7) - always-on infrastructure the other two build on: the Extra settings pages, the theme engine, the flag-override mechanism, the multi-profile plumbing.
+
+Patches still apply in basename order, so the split changes classification only, not behavior. `scripts/apply_patches.py` now pins the total in `EXPECTED_PATCH_COUNT` and refuses to run if discovery finds a different number - a patch cannot be added or lost without someone saying so. The README documents the recipe for adding a community feature.
+
+### Feature tests are grouped the same way, and CI actually runs them
+
+The ten feature test harnesses sat flat in `scripts/` and nothing ever ran them - they were manual tools, so a broken feature only surfaced after a release. They now sit beside the patches they cover, in `scripts/tests/community/` (5) and `scripts/tests/core/` (5), with the shared plumbing in `scripts/tests/lib/`.
+
+A new `scripts/run-feature-tests.sh` runs them all, reports PASS / FAIL / SKIP per harness, and fails the run on any failure; `scripts/run-feature-tests.sh community` runs one group. Like `EXPECTED_PATCH_COUNT`, it pins `EXPECTED_TEST_HARNESSES` and refuses to run if discovery finds a different number, so a harness cannot go missing quietly. CI runs the script in the `lint-scripts` job, where the Nim patch binaries the tests need have just been compiled - on every pull request and every release. `scripts/validate-patches.sh` now delegates to the same script instead of keeping its own copy of the suite list.
+
+### validate-patches.sh can finally exit green
+
+The one patch whose target lives in the .deb's resources tree instead of inside app.asar (`fix_ion_dist_linux`) made every full local `validate-patches.sh` run end with a failure it could do nothing about. The script now resolves such targets against an extracted .deb tree (second argument, or the conventional `tmp/extract/` sibling) and validates the patch for real; without a tree it reports SKIP instead of FAIL. A healthy checkout now validates 55/55 with exit 0.
+
+### CI: the smoke test no longer fails on its own cleanup
+
+The smoke test could report a pass and then fail the job anyway: Electron's shutdown crashes in headless containers, and crash reporting kept writing into the temporary profile while the test was deleting it. Cleanup now waits for the process tree to end and retries the delete, and a cleanup hiccup can no longer override the test verdict.
+
+### The Code tab's side panels can open as tabs instead of a split
+
+Diff, terminal, browser, files, artifacts and background tasks have always shared the panel area as a fixed split, each one shrinking to make room for its neighbours. A new **Panel tabs** switch (Settings → Extra → Community Features → Layout) turns that into a tab strip instead: each panel gets the full width of the panel area. Open panels the way you always have - the app's own toolbar buttons and its **Session actions** menu - and each one arrives as a new tab. <kbd>Ctrl</kbd>+<kbd>1</kbd>-<kbd>9</kbd> jump straight to a tab, and closing one replays it through the panel's own close control, so panel teardown itself is unchanged. The chat column is unaffected.
+
+Switching tabs shows and hides panels rather than rebuilding them, so **every panel keeps its state**: the diff panel's expanded and collapsed files are still expanded and collapsed when you come back, and the terminal keeps its scrollback and its size. Upstream's own layout is never rewritten to switch - the panels you are not looking at are still in it, just hidden - which is also why a switch is instant instead of taking the second a rebuild used to.
+
+The consequence worth knowing: a hidden panel keeps running. A live preview goes on rendering and a browser tab goes on loading in the background, where closing a split pane would have torn them down. That is what makes them instant to come back to, and it costs some CPU for a preview that never stops moving.
+
+**The chat/side boundary stays where you put it.** The panel area is sized as if it were a two-pane split - chat versus one panel - and that proportion is remembered per session, so opening or closing a panel no longer moves the boundary. Drag the divider between chat and the panel area to resize, exactly as before; where you drop it is where it stays, on every tab and after a reload.
+
+The tab bar carries the expand control, at its right edge. Expanding spans the active panel across the window, and it **stays** expanded while you switch tabs, so you can flick between two panels at full width. Upstream discards the other panels while one is expanded, so the panel you switch *to* while expanded comes back fresh - collapse first if you want to keep where you were. With many tabs open the chips scroll sideways while the expand control stays pinned at the right edge, so it is always reachable.
+
+Opening and closing panels does not disturb the layout. A panel the app has only just inserted is hidden before it can paint, rather than appearing as a second split for a few frames and then being tidied away, so the boundary holds still through the whole operation - measured at zero pixels of movement across every frame of an open and a close, where it previously jumped 165 px for around 90 ms each way.
+
+Off by default, and off is a complete retreat: the tab bar and its styling are removed and upstream's real split layout is simply there again, because it was never replaced. Nothing you had open is lost. Only the active tab and the chat/side proportion are remembered per session - which panels are open is upstream's own record, so opening, closing or reordering panels in its UI is reflected in the tabs.
+
+Because the Code tab is remote claude.ai code, the bar degrades rather than fights: if an update moves the internals it drives, it renders no bar and warns once, leaving the layout exactly as the app left it - and since it never rewrites that layout, the degraded state is just the stock split UI. Everything it reaches into is read-only: the only upstream controls it ever presses are the active panel's own close and expand buttons, and only when you press them. The anchors it depends on are inventoried with re-derivation recipes in `baseline/PANEL_TABS_ANCHORS.md`, which joins the per-release audit checklist.
+
+Designed, built and hardened by [@dels07](https://github.com/dels07) in [#216](https://github.com/patrickjaja/claude-desktop-extra/pull/216) - thanks!
+
+### Diff views: the scope dropdown no longer survives a panel swap
+
+Upstream reuses a panel's chrome row when one panel replaces another in the same slot, and the diff-views scope dropdown installed on that row could survive the swap and appear on a view it does not apply to. Installed dropdowns are now revalidated against the row's current view and removed when it no longer qualifies. A pre-existing bug, found and fixed in [#216](https://github.com/patrickjaja/claude-desktop-extra/pull/216) because panel tabs made it easy to hit.
+
+### Release pipeline: releases can skip the AUR during an extended outage
+
+The AUR preflight added on 2026-08-03 did its job: when the AUR went into maintenance again, the v1.24012.11 auto-release (run 30868900341) stopped before publishing anything, keeping every channel consistent. The right call for a blip - but this maintenance window has lasted days, freezing all channels behind one that is down. The release workflow now takes a `skip_aur` dispatch input: the AUR preflight and push are skipped, every other channel (GitHub Release, pacman repo assets, Pages apt/dnf repos, README/Nix versions) publishes normally, and the AUR catches up automatically on the next non-skipped release, since the push diffs the PKGBUILD against whatever the AUR currently holds. Unattended auto-releases keep the default `false`, so the fail-fast preflight still guards them.
+
 ## 2026-08-03
 
 ### Launching from a panel or menu no longer freezes startx/xinit desktops

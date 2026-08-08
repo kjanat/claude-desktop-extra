@@ -27,13 +27,20 @@ if [ ! -d "$APP_CONTENTS/.vite" ]; then
     echo "Error: Invalid app.asar.contents directory"
     echo "Expected to find .vite/ directory in: $APP_CONTENTS"
     echo ""
-    echo "Usage: $0 <path_to_app.asar.contents>"
+    echo "Usage: $0 <path_to_app.asar.contents> [path_to_deb_tree]"
     echo ""
     echo "Example:"
     echo "  asar extract app.asar app.asar.contents"
     echo "  $0 ./app.asar.contents"
+    echo ""
+    echo "nim-dir patches (ion-dist) target the .deb's resources tree, not"
+    echo "app.asar. Pass the extracted tree (e.g. ./tmp/extract/usr/lib/claude-desktop)"
+    echo "as the second argument; without it a sibling ../extract/usr/lib/claude-desktop"
+    echo "of app.asar.contents is probed, and if neither exists those patches SKIP."
     exit 1
 fi
+
+DEB_TREE="${2:-}"
 
 # Compile Nim patches first (required for validation)
 echo "Compiling Nim patches..."
@@ -50,11 +57,16 @@ PASSED=0
 FAILED=0
 SKIPPED=0
 
-for patch_file in "$PATCHES_DIR"/*.nim "$PATCHES_DIR"/*.js; do
+# Patch sources live one level down, in the category subdirs (linux/, core/,
+# community/). The */ glob picks up any category without needing edits here.
+for patch_file in "$PATCHES_DIR"/*/*.nim "$PATCHES_DIR"/*/*.js; do
     [ -f "$patch_file" ] || continue
 
     TOTAL=$((TOTAL + 1))
     filename=$(basename "$patch_file")
+    # Compiled binary sits next to its source, so derive it from the full path -
+    # basename alone would drop the category subdir.
+    nim_bin="${patch_file%.nim}"
 
     # Extract metadata
     target=$(grep -m1 '@patch-target:' "$patch_file" 2>/dev/null | sed 's/.*@patch-target:[[:space:]]*//' | tr -d '\r' || echo "")
@@ -92,9 +104,26 @@ for patch_file in "$PATCHES_DIR"/*.nim "$PATCHES_DIR"/*.js; do
     fi
 
     if [ "$patch_type" = "nim-dir" ]; then
+        # nim-dir targets live in the .deb's resources tree, NOT inside
+        # app.asar - they can never resolve under $APP_CONTENTS. Probe the
+        # explicit deb tree argument, then the conventional sibling layout
+        # (tmp/app.asar.contents next to tmp/extract/), and only SKIP - not
+        # FAIL - when neither is available: real builds exercise these
+        # patches via build-patched-tarball.sh against the full tree.
         if [ -z "$actual_target" ] || [ ! -d "$actual_target" ]; then
-            echo "  Status: FAIL (target directory not found)"
-            FAILED=$((FAILED + 1))
+            sibling_tree="$(dirname "$APP_CONTENTS")/extract/usr/lib/claude-desktop"
+            for tree in "$DEB_TREE" "$sibling_tree"; do
+                [ -n "$tree" ] && [ -d "$tree/$target" ] || continue
+                actual_target="$tree/$target"
+                break
+            done
+        fi
+        if [ -z "$actual_target" ] || [ ! -d "$actual_target" ]; then
+            echo "  Status: SKIP (target lives in the .deb tree, not app.asar;"
+            echo "          pass the extracted tree as 2nd arg or extract the .deb"
+            echo "          to a sibling ../extract/ - build-patched-tarball.sh"
+            echo "          exercises this patch in real builds)"
+            SKIPPED=$((SKIPPED + 1))
             echo ""
             continue
         fi
@@ -109,7 +138,6 @@ for patch_file in "$PATCHES_DIR"/*.nim "$PATCHES_DIR"/*.js; do
 
     # For Nim patches, run the compiled binary on a copy
     if [ "$patch_type" = "nim" ]; then
-        nim_bin="$PATCHES_DIR/${filename%.nim}"
         if [ ! -x "$nim_bin" ]; then
             echo "  Status: FAIL (compiled binary not found: $nim_bin)"
             FAILED=$((FAILED + 1))
@@ -149,7 +177,6 @@ for patch_file in "$PATCHES_DIR"/*.nim "$PATCHES_DIR"/*.js; do
     elif [ "$patch_type" = "nim-dir" ]; then
         # nim-dir patches take a directory argument and locate their
         # content-hashed target file inside it (e.g. ion-dist SPA bundles)
-        nim_bin="$PATCHES_DIR/${filename%.nim}"
         if [ ! -x "$nim_bin" ]; then
             echo "  Status: FAIL (compiled binary not found: $nim_bin)"
             FAILED=$((FAILED + 1))
@@ -179,29 +206,29 @@ for patch_file in "$PATCHES_DIR"/*.nim "$PATCHES_DIR"/*.js; do
     echo ""
 done
 
-# The "Extra" settings area is injected into the REMOTE claude.ai Settings modal,
-# so applying cleanly says nothing about it rendering correctly. The DOM suite
-# runs its page half against fixtures in headless Chromium. Skipped rather than
-# failed where no browser is installed - it needs no npm package, only a chrome.
+# A clean patch run says nothing about the features' LIVE behaviour: whether the
+# theme engine re-themes every open window, whether the picker groups its
+# sections, whether the panel tabs bar mounts into remote epitaxy DOM, whether
+# the "Extra" settings area renders, or whether the Deployment panel writes the
+# file the 1P/3P bootstrap reads. The feature test harnesses under
+# scripts/tests/{community,core}/ cover exactly that, and scripts/run-feature-tests.sh
+# is the single place that knows which ones exist (it also runs in CI) - so this
+# script delegates rather than keeping a second, driftable copy of the list.
 echo "-----------------------------------"
-echo "Extra settings DOM suite (headless Chromium)"
-if command -v node >/dev/null 2>&1 && {
-        command -v chromium >/dev/null 2>&1 ||
-        command -v chromium-browser >/dev/null 2>&1 ||
-        command -v google-chrome-stable >/dev/null 2>&1 ||
-        command -v google-chrome >/dev/null 2>&1; }; then
+echo "Feature test harnesses (scripts/run-feature-tests.sh)"
+if command -v node >/dev/null 2>&1; then
     TOTAL=$((TOTAL + 1))
-    # The NODE exit status decides, never the pipeline's: `node ... | sed`
+    # The RUNNER's exit status decides, never the pipeline's: `runner | sed`
     # reports sed's status, which is always 0.
-    ES_LOG="$(mktemp)"
-    if node "$(dirname "$0")/test-extra-settings-dom.mjs" >"$ES_LOG" 2>&1; then
-        ES_RC=0
+    FT_LOG="$(mktemp)"
+    if "$SCRIPT_DIR/run-feature-tests.sh" >"$FT_LOG" 2>&1; then
+        FT_RC=0
     else
-        ES_RC=$?
+        FT_RC=$?
     fi
-    sed 's/^/  /' "$ES_LOG"
-    rm -f "$ES_LOG"
-    if [ "$ES_RC" -eq 0 ]; then
+    sed 's/^/  /' "$FT_LOG"
+    rm -f "$FT_LOG"
+    if [ "$FT_RC" -eq 0 ]; then
         echo "  Status: PASS"
         PASSED=$((PASSED + 1))
     else
@@ -209,114 +236,11 @@ if command -v node >/dev/null 2>&1 && {
         FAILED=$((FAILED + 1))
     fi
 else
-    echo "  Status: SKIP (no node and/or chromium on this machine)"
-    SKIPPED=$((SKIPPED + 1))
-fi
-echo ""
-
-# The expand/collapse-all button drives REMOTE epitaxy markup, so applying
-# cleanly says nothing about it landing in the right place or respecting
-# upstream's aria-expanded contract. Same headless-Chromium approach, no npm.
-echo "-----------------------------------"
-echo "Diff views expand/collapse-all DOM suite (headless Chromium)"
-if command -v node >/dev/null 2>&1 && {
-        command -v chromium >/dev/null 2>&1 ||
-        command -v chromium-browser >/dev/null 2>&1 ||
-        command -v google-chrome-stable >/dev/null 2>&1 ||
-        command -v google-chrome >/dev/null 2>&1; }; then
-    TOTAL=$((TOTAL + 1))
-    # The NODE exit status decides, never the pipeline's. `node ... | sed` reports
-    # sed's status, which is always 0, so this block used to print PASS even when
-    # every assertion in the suite failed. Capture, print indented, then test the
-    # SAVED status.
-    DV_LOG="$(mktemp)"
-    if node "$(dirname "$0")/test-diff-views-expand-dom.mjs" >"$DV_LOG" 2>&1; then
-        DV_RC=0
-    else
-        DV_RC=$?
-    fi
-    sed 's/^/  /' "$DV_LOG"
-    rm -f "$DV_LOG"
-    if [ "$DV_RC" -eq 0 ]; then
-        echo "  Status: PASS"
-        PASSED=$((PASSED + 1))
-    else
-        echo "  Status: FAIL"
-        FAILED=$((FAILED + 1))
-    fi
-else
-    echo "  Status: SKIP (no node and/or chromium on this machine)"
-    SKIPPED=$((SKIPPED + 1))
-fi
-echo ""
-
-# A clean patch run says nothing about the theme engine's LIVE behaviour: whether a theme
-# switch re-themes the spinner in every open window (it used to need a restart), whether
-# a revert restores Claude's own glyph, or whether the picker groups gaming palettes by
-# category, or whether the theme survives the scope upstream re-defines --bg-100 in.
-# These suites run the REAL injected engine (electron shimmed) and the real picker page /
-# injector / stylesheet in headless Chromium. Each one exits 3 to say "a tool I need is
-# not installed" - that is a SKIP, not a FAIL.
-# The Deployment panel writes the files the app's 1P/3P bootstrap reads. A green
-# patch run proves nothing about WHICH file got written, so this suite runs the
-# real handlers (electron shimmed) against a temporary profile.
-echo "-----------------------------------"
-echo "Deployment mode suite (node)"
-if command -v node >/dev/null 2>&1; then
-    TOTAL=$((TOTAL + 1))
-    deploy_out=$(node "$SCRIPT_DIR/test-deployment-main.mjs" 2>&1) && deploy_rc=0 || deploy_rc=$?
-    echo "$deploy_out" | sed 's/^/  /'
-    case $deploy_rc in
-        0)
-            echo "  Status: PASS"
-            PASSED=$((PASSED + 1))
-            ;;
-        3)
-            echo "  Status: SKIP (the suite reported a missing tool)"
-            SKIPPED=$((SKIPPED + 1))
-            ;;
-        *)
-            echo "  Status: FAIL"
-            FAILED=$((FAILED + 1))
-            ;;
-    esac
-else
     echo "  Status: SKIP (no node on this machine)"
     TOTAL=$((TOTAL + 1))
     SKIPPED=$((SKIPPED + 1))
 fi
 echo ""
-
-echo "-----------------------------------"
-echo "Theme engine suites (node + headless Chromium)"
-if command -v node >/dev/null 2>&1; then
-    for suite in test-spinner-main.mjs test-spinner-dom.mjs test-picker-gaming.mjs test-theme-scope.mjs; do
-        TOTAL=$((TOTAL + 1))
-        echo "  [$suite]"
-        suite_out=$(node "$SCRIPT_DIR/$suite" 2>&1) && suite_rc=0 || suite_rc=$?
-        echo "$suite_out" | sed 's/^/    /'
-        case $suite_rc in
-            0)
-                echo "    Status: PASS"
-                PASSED=$((PASSED + 1))
-                ;;
-            3)
-                echo "    Status: SKIP (the suite reported a missing tool)"
-                SKIPPED=$((SKIPPED + 1))
-                ;;
-            *)
-                echo "    Status: FAIL"
-                FAILED=$((FAILED + 1))
-                ;;
-        esac
-        echo ""
-    done
-else
-    echo "  Status: SKIP (no node on this machine)"
-    TOTAL=$((TOTAL + 4))
-    SKIPPED=$((SKIPPED + 4))
-    echo ""
-fi
 
 echo "==================================="
 echo "  Summary"

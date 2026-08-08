@@ -1,6 +1,6 @@
 ---
 name: linux
-description: Linux compatibility reference for the claude-desktop-extra project (repackaging Anthropic's official Claude Desktop Linux .deb and patching its app.asar for the distros Anthropic does not ship). Use when working on Linux support, session managers, distros, Computer Use input/screenshot backends, glibc floors, Wayland/X11, multi-profile, or any patch in patches/*.nim. Loads the distro/session matrix, the input + screenshot cascades, native-binary glibc floors, and known Linux gotchas.
+description: Linux compatibility reference for the claude-desktop-extra project (repackaging Anthropic's official Claude Desktop Linux .deb and patching its app.asar for the distros Anthropic does not ship). Use when working on Linux support, session managers, distros, Computer Use input/screenshot backends, glibc floors, Wayland/X11, multi-profile, or any patch in patches/*/*.nim. Loads the distro/session matrix, the input + screenshot cascades, native-binary glibc floors, and known Linux gotchas.
 when_to_use: When the user mentions Linux compatibility, X11, Wayland, wlroots, GNOME, KDE, XWayland, a distro (Arch/Ubuntu/Debian/Fedora/RHEL/NixOS/Jetson), xdotool/ydotool/grim/spectacle, glibc, kwin-portal-bridge, app_id/WM_CLASS, profiles, or edits files under patches/ or scripts/.
 paths: patches/**, scripts/**, js/**, baseline/PLATFORM_GATE_BASELINE.md, wayland.md
 ---
@@ -41,7 +41,7 @@ Repackages Anthropic's **official Claude Desktop Linux `.deb`** (bundles Electro
 - `claude-desktop --diagnose` dumps `XDG_SESSION_TYPE`, `WAYLAND_DISPLAY`, `platform_mode`, electron major.
 
 ## Input + screenshot executors - single source of truth
-The dispatch logic lives in checked-in JS under `js/`, embedded into `patches/fix_computer_use_linux.nim` via `staticRead` (36 sub-patches, PCRE/`std/nre` for backreferences). **Edit the `.js`, not the patch.**
+The dispatch logic lives in checked-in JS under `js/`, embedded into `patches/linux/fix_computer_use_linux.nim` via `staticRead` (36 sub-patches, PCRE/`std/nre` for backreferences). **Edit the `.js`, not the patch.**
 - `js/cu_linux_executor.js` - inline executor: session detection, per-session bridge dispatch, residual fallbacks, `[claude-cu] diagnostics:` lines.
 - `js/executor_linux.js` - KWin/KDE hybrid executor (kwin mode).
 - `js/cu_handler_injection.js`, `js/cu_mode_preamble.js` - handler wiring + mode/bridge-binary resolution (env var → `process.resourcesPath` → `$PATH`; env vars: `X11_BRIDGE_BIN`, `WLROOTS_BRIDGE_BIN`, `GNOME_PORTAL_BRIDGE_BIN`, `KWIN_PORTAL_BRIDGE_BIN`).
@@ -68,7 +68,7 @@ The dispatch logic lives in checked-in JS under `js/`, embedded into `patches/fi
 ## Multi-profile / window identity (`scripts/claude-desktop-launcher.sh`)
 - Per-profile Electron binary at `~/.local/lib/claude-desktop/<APP_ID>-<name>` via **hardlink → reflink → copy** (never symlink - Electron derives identity from `realpath(/proc/self/exe)`, kernel resolves symlinks first). Gives per-profile process/exe identity, NOT a per-profile window app_id.
 - WM_CLASS = Wayland app_id = `com.anthropic.Claude` - Chromium derives it from the bundle's `desktopName` (upstream's own reverse-DNS identity; the old `claude-desktop` pin was removed 2026-07-15). Shared across ALL profiles; distinct per-profile app_id needs a per-profile `desktopName` override (unsolved follow-up). systemd scope `app-com.anthropic.Claude(-<name>)-$$.scope`; installed `.desktop` = `com.anthropic.Claude.desktop` (`StartupWMClass=com.anthropic.Claude`); Quick Entry keeps its own `claude-quick-entry` id. XDG autostart entries derive from the BINARY basename instead: `~/.config/autostart/claude(-<name>).desktop`.
-- Per-profile isolation: `--user-data-dir` (Electron userData), `CLAUDE_CONFIG_DIR` (Claude Code CLI), `CLAUDE_PROFILE` env (sockets/markers). See CLAUDE.md "Profile System" table.
+- Per-profile isolation: `--user-data-dir` (Electron userData), `CLAUDE_CONFIG_DIR` (Claude Code CLI), `CLAUDE_PROFILE` env (sockets/markers). See AGENTS.md "Profile System" table.
 - **Portal identity**: xdg-desktop-portal resolves unsandboxed Electron via systemd scope → `.desktop` id; a reverse-DNS id is required for activation routing and KDE persistent grants. Shipped since 2026-07-15: `desktopName` / `.desktop` / `StartupWMClass` / scope all agree on `com.anthropic.Claude`. A build tripwire in `build-patched-tarball.sh` fails loud if upstream renames `desktopName` again.
 
 ## Known Linux gotchas (one line each → which patch)
