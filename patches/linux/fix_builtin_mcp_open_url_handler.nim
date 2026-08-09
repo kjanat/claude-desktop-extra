@@ -39,36 +39,25 @@ proc apply*(input: string): string =
     return input
 
   # Step 1: inject the branch at the head of the child-message if-chain.
-  #
-  # v1.25927.0 dropped the null-check ternary for real optional chaining and
-  # renamed const->let: };return(a,c)=>{let u=a;if(u?.type==="msal-cache-get"
-  # (previously: };return(d,f)=>{const p=d;if((p==null?void 0:p.type)==="msal-cache-get").
-  # re2 has no backreferences, so the message-var identity between "let X=Y;"
-  # and "if(X?.type===" can't be pinned in one pattern; match the head first,
-  # then verify the immediately-following text is "if(<thatvar>?.type===" by
-  # literal comparison.
-  let headPat =
-    re2"""\};return\(([\w$]+),[\w$]+\)=>\{let ([\w$]+)=[\w$]+;"""
-  var injPos = -1
-  var msgVar = ""
-  var headText = ""
-  var ifHeadText = ""
-  for m in input.findAll(headPat):
-    let candidateVar = input[m.group(1)]
-    let afterPos = m.boundaries.b + 1
-    let ifHead = "if(" & candidateVar & "?.type===`msal-cache-get`"
-    if afterPos + ifHead.len <= input.len and
-        input[afterPos ..< afterPos + ifHead.len] == ifHead:
-      injPos = m.boundaries.a
-      msgVar = candidateVar
-      headText = input[m.boundaries.a .. m.boundaries.b]
-      # Everything through the comparison operator, excluding the backtick-quoted
-      # "msal-cache-get" value itself, so the original branch is preserved verbatim.
-      ifHeadText = "if(" & msgVar & "?.type==="
-      break
-  if injPos < 0:
-    echo "  [FAIL] built-in MCP open-url handler: found 0 msal-cache-get injection sites (expected 1)"
+  # Matches (v1.20186.1): };return(d,f)=>{const p=d;if((p==null?void 0:p.type)==="msal-cache-get"
+  # Matches (v1.26832.0): };return(a,c)=>{let u=a;if(u?.type===`msal-cache-get`
+  # The v1.26832.0 minifier switched to `let`, native optional chaining instead
+  # of the (x==null?void 0:x.y) desugaring, and backtick template literals - all
+  # three are accepted below so the patch spans both bundle shapes.
+  # Groups: 0=head incl. "let p=d;", 1=message param, 2=message var,
+  # 3=original if-head.
+  let pattern =
+    re2"""(\};return\(([\w$]+),[\w$]+\)=>\{(?:const|let|var) ([\w$]+)=[\w$]+;)(if\((?:\([\w$]+==null\?void 0:[\w$]+\.type\)|[\w$]+\?\.type)===["`]msal-cache-get["`])"""
+
+  # Locate the injection site so we can scope the electron-var scan to its chunk.
+  var injMatches: seq[RegexMatch2] = @[]
+  for m in input.findAll(pattern):
+    injMatches.add(m)
+  if injMatches.len != 1:
+    echo "  [FAIL] built-in MCP open-url handler: found " & $injMatches.len &
+      " msal-cache-get injection sites (expected 1)"
     quit(1)
+  let injPos = injMatches[0].boundaries.a
 
   # Step 2: recover the electron namespace var from within the injection-site
   # chunk only. The chunk spans from the split marker preceding injPos to the
@@ -83,7 +72,7 @@ proc apply*(input: string): string =
   let chunk = input[chunkStart ..< chunkEnd]
 
   var electronVars = initHashSet[string]()
-  for m in chunk.findAll(re2"([\w$]+)\.safeStorage\.decryptString\("):
+  for m in chunk.findAll(re2"((?:[\w$]+\.)*[\w$]+)\.safeStorage\.decryptString\("):
     electronVars.incl(chunk[m.group(0)])
   if electronVars.len != 1:
     echo "  [FAIL] built-in MCP open-url handler: expected exactly 1 distinct " &
@@ -94,13 +83,23 @@ proc apply*(input: string): string =
   for v in electronVars:
     electronVar = v
 
-  let spliceEnd = injPos + headText.len + ifHeadText.len
-  let injection =
-    "if((" & msgVar & "?.type)===\"open-url\"&&typeof " & msgVar &
-    ".url==\"string\"&&" & msgVar & ".url.startsWith(\"https://\")){" & electronVar &
-    ".shell.openExternal(" & msgVar & ".url).catch(()=>{});return}"
-  result =
-    input[0 ..< injPos] & headText & injection & ifHeadText & input[spliceEnd .. ^1]
+  var count = 0
+  result = input.replace(
+    pattern,
+    proc(m: RegexMatch2, s: string): string =
+      inc count
+      let head = s[m.group(0)]
+      let msgVar = s[m.group(2)]
+      let ifHead = s[m.group(3)]
+      head & "if((" & msgVar & "==null?void 0:" & msgVar &
+        ".type)===\"open-url\"&&typeof " & msgVar & ".url==\"string\"&&" & msgVar &
+        ".url.startsWith(\"https://\")){" & electronVar & ".shell.openExternal(" & msgVar &
+        ".url).catch(()=>{});return}" & ifHead,
+  )
+
+  if count != 1:
+    echo "  [FAIL] built-in MCP open-url handler: " & $count & " matches (expected 1)"
+    quit(1)
 
   echo "  [OK] built-in MCP open-url handler: shell.openExternal branch added"
 
