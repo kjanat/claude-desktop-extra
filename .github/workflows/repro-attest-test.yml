@@ -293,7 +293,7 @@ jobs:
               RELEASE="v${version}-${GITHUB_RUN_NUMBER}"
             fi
             TITLE="Claude Desktop ${version}"
-            RELEASE_FLAGS=(--latest)
+            RELEASE_FLAGS=(--latest=false)
             INTRO="Claude Desktop ${version} for Linux ${arch}, repackaged from Anthropic's official .deb."
           else
             RELEASE="repro-test-${version}-${GITHUB_RUN_NUMBER}"
