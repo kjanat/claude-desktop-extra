@@ -17,7 +17,8 @@ const PAGE_JS = staticRead("../../js/diff_views_page.js")
 const EXPAND_JS = staticRead("../../js/diff_views_expand.js")
 
 const MARKER = "__CDB_DIFF_VIEWS__"
-const PLACEHOLDER = "\"__CDB_DV_PAGE_SRC__\""
+# The formatter rewrites js/ string literals between quote styles, so accept both.
+const PLACEHOLDERS = ["\"__CDB_DV_PAGE_SRC__\"", "'__CDB_DV_PAGE_SRC__'"]
 
 proc escapeJs(s: string): string =
   result = s
@@ -27,13 +28,18 @@ proc escapeJs(s: string): string =
   result = result.replace("\r", "")
 
 proc buildInjection(): string =
-  if PLACEHOLDER notin MAIN_JS:
+  var placeholder = ""
+  for p in PLACEHOLDERS:
+    if p in MAIN_JS:
+      placeholder = p
+      break
+  if placeholder.len == 0:
     raise newException(ValueError, "diff_views_main.js lost its page-src placeholder")
   # ORDER MATTERS: the expand module defines window.__cdbDvExpandAll, which the
   # page script reads while it builds the chrome row. Both halves are evaluated
   # as ONE string, so the module simply goes first.
   let pageSrc = EXPAND_JS & "\n;\n" & PAGE_JS
-  MAIN_JS.replace(PLACEHOLDER, "\"" & escapeJs(pageSrc) & "\"")
+  MAIN_JS.replace(placeholder, "\"" & escapeJs(pageSrc) & "\"")
 
 proc apply*(input: string): string =
   result = input

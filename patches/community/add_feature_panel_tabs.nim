@@ -18,7 +18,8 @@ const HARVEST_JS = staticRead("../../js/panel_tabs_harvest.js")
 const PAGE_JS = staticRead("../../js/panel_tabs_page.js")
 
 const MARKER = "__CDB_PANEL_TABS__"
-const PLACEHOLDER = "\"__CDB_TABS_PAGE_SRC__\""
+# The formatter rewrites js/ string literals between quote styles, so accept both.
+const PLACEHOLDERS = ["\"__CDB_TABS_PAGE_SRC__\"", "'__CDB_TABS_PAGE_SRC__'"]
 
 proc escapeJs(s: string): string =
   result = s
@@ -28,14 +29,19 @@ proc escapeJs(s: string): string =
   result = result.replace("\r", "")
 
 proc buildInjection(): string =
-  if PLACEHOLDER notin MAIN_JS:
+  var placeholder = ""
+  for p in PLACEHOLDERS:
+    if p in MAIN_JS:
+      placeholder = p
+      break
+  if placeholder.len == 0:
     raise newException(ValueError, "panel_tabs_main.js lost its page-src placeholder")
   # ORDER MATTERS: page.js reads __cdbTabsLayout / __cdbTabsStore / __cdbTabsHarvest
   # at evaluation time and bails if any is missing. All four are evaluated as ONE
   # string, so dependency order is simply file order.
   let pageSrc = LAYOUT_JS & "\n;\n" & STORE_JS & "\n;\n" & HARVEST_JS & "\n;\n" &
     PAGE_JS & "\n;\nif(window.__cdbTabsPage)window.__cdbTabsPage.start();\n"
-  MAIN_JS.replace(PLACEHOLDER, "\"" & escapeJs(pageSrc) & "\"")
+  MAIN_JS.replace(placeholder, "\"" & escapeJs(pageSrc) & "\"")
 
 proc apply*(input: string): string =
   result = input
