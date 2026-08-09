@@ -8,15 +8,21 @@
 # gated on a win32-only boolean, and the helper that pushes theme updates is
 # gated the same way.
 #
-# Three patches together do the job:
+# Two patches together do the job:
 #   1. Open the main BrowserWindow with frame:false + a real titleBarOverlay
 #      style object on Linux (plus autoHideMenuBar + icon).
 #   2. Open the setTitleBarOverlay theme-update gate for Linux so the
 #      overlay colors follow Anthropic's `Hb` flag and the OS theme.
-#   3. Replace a transparent placeholder ("#00000000") with Anthropic's
-#      opaque window background in Linux integrated mode. Electron on
-#      Wayland silently substitutes a grey strip for that transparent
-#      value, so without this swap the overlay looks like a grey block.
+#
+# A third patch used to swap a transparent "#00000000" placeholder in the
+# overlay-style helper for the opaque window background (Electron on Wayland
+# paints that transparent value as a grey strip). v1.26832.0 moved the helper
+# into a code-split chunk and computes an opaque color there itself, so the
+# placeholder site is gone and the swap is upstreamed. The removed pattern
+# matched any hex color, and on v1.26832.0 it matched the two theme branches
+# of the NEW helper instead, splicing a captured identifier from index.js
+# into a chunk scope where it does not resolve (TypeError on every
+# nativeTheme change; white main window, #installed-1.26832.0-2).
 #
 # All three behaviors gate on CLAUDE_NATIVE_TITLEBAR: unset (or anything
 # other than "1") = integrated mode; "1" = restore the GTK frame. The
@@ -130,24 +136,6 @@ proc apply*(input: string): string =
       )
   else:
     raise newException(ValueError, &"setTitleBarOverlay gate: {n} (expected 0 or 1)")
-
-  # Patch 3: opaque-color swap inside the helper that builds the overlay
-  # style. The non-Hb branch uses a transparent placeholder ("#00000000"),
-  # which Electron on Linux Wayland treats as "use default" and paints as
-  # a grey strip. Swap it for bgFn() in Linux integrated mode so the
-  # overlay matches the window background. Two occurrences: one per theme.
-  n = 0
-  result = result.replace(
-    re2"""(\{color:[\w$]+\?[`"]#[0-9a-fA-F]+[`"]:)([\w$]+)(,symbolColor:)""",
-    proc(m: RegexMatch2, s: string): string =
-      inc n
-      let transparentVar = s[m.group(1)]
-      s[m.group(0)] & "(" & LINUX_INTEGRATED & ")?" & bgFn & "():" & transparentVar &
-        s[m.group(2)],
-  )
-  if n != 2:
-    raise newException(ValueError, &"T8 transparent placeholder: {n}/2")
-  echo &"  [OK] T8 transparent -> bgFn() in Linux integrated mode: {n}"
 
 when isMainModule:
   if paramCount() != 1:

@@ -4,6 +4,14 @@ All notable changes to the claude-desktop-extra packages will be documented in t
 
 ## 2026-08-09
 
+### White main window on v1.26832.0-2: one titlebar sub-patch matched the wrong site
+
+The integrated-titlebar patch carried a third step that swapped a transparent `#00000000` placeholder in the overlay-style helper for the opaque window background. v1.26832.0 moved that helper into a code-split chunk and computes an opaque color there itself, so the placeholder site no longer exists - and the pattern, which accepted any hex color, matched the two theme branches of the new helper instead. The splice referenced an identifier from `index.js` inside a chunk scope where it does not resolve, so every OS theme event threw a TypeError during startup and the main window stayed white. The sub-patch is removed: upstream now does what it did. The remaining two steps (frameless window with overlay, theme-update gate) are unaffected.
+
+### Repro-attest releases no longer claim Latest
+
+The testing workflow's master-branch publish step passed `--latest`, so every push moved GitHub's Latest pointer to a tarball-only release - which broke the pacman repository, whose `Server` URL resolves through `releases/latest/download`. It now publishes with `--latest=false`.
+
 ### Patches re-validated for Claude Desktop v1.25927.0 / v1.26832.0
 
 Upstream's v1.25927.0 re-minify broke most patches at once. (v1.26832.0 shipped before the fixed release could build; it keeps the same bundle shape, and one more patch anchor - the renderer-death guard's session-state call - needed a per-release-name tolerance for it.) Two things changed structurally: the bundle now has a **second code-split chunk group** (`index2.chunk-*.js`, 130 files) that the patch orchestrator and the validation script did not stage, so patches saw an incomplete bundle; and the minifier switched most double-quoted string literals to backtick template literals, alongside scattered `const`→`let`, optional-chaining, and dotted-namespace shifts.
