@@ -121,7 +121,7 @@ Updates are automatic via `sudo apt update && sudo apt upgrade`.
 <summary>Manual .deb install (without APT repo)</summary>
 
 ```bash
-wget https://github.com/kjanat/claude-desktop-extra/releases/latest/download/claude-desktop-extra_1.26832.0-4_amd64.deb
+wget https://github.com/kjanat/claude-desktop-extra/releases/latest/download/claude-desktop-extra_1.26832.0-5_amd64.deb
 sudo dpkg -i claude-desktop-extra_*_amd64.deb
 ```
 
@@ -150,7 +150,7 @@ Updates are automatic via `sudo dnf upgrade`.
 <summary>Manual .rpm install (without DNF repo)</summary>
 
 ```bash
-wget https://github.com/kjanat/claude-desktop-extra/releases/latest/download/claude-desktop-extra-1.26832.0-4.x86_64.rpm
+wget https://github.com/kjanat/claude-desktop-extra/releases/latest/download/claude-desktop-extra-1.26832.0-5.x86_64.rpm
 sudo dnf install ./claude-desktop-extra-*.x86_64.rpm
 ```
 
