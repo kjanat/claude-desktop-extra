@@ -49,7 +49,7 @@
 let
   # Updated automatically by CI (build-and-release.yml) on each release.
   version = "1.26832.0"; # pkgver: always the upstream Claude Desktop version
-  pkgrel = "4"; # Arch-style release counter: bumped on re-releases of the same upstream version, reset to 1 on version bumps
+  pkgrel = "5"; # Arch-style release counter: bumped on re-releases of the same upstream version, reset to 1 on version bumps
   hash = "sha256-N1X1KQzUam8TWoQ22f8ESyCi0eIYQG/V+3Wfi45bia0=";
   # Every release publishes under its own tag (v<version> for pkgrel 1,
   # v<version>-<pkgrel> for re-releases) and its assets are never overwritten
