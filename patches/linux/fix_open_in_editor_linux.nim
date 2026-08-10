@@ -18,16 +18,12 @@
 #   registered and nothing otherwise. xdg-utils ships xdg-mime on every supported
 #   distro (it is already a runtime dep for xdg-open, used by the launcher).
 #
-# WHAT THE CALL SITES CONSUME (verified against the bundle):
-#   - getInstalledEditors() loop:      truthiness of X?.path, over a shared
-#                                       {protocol,name} table (v1.25927.0
-#                                       folded isVSCodeInstalled/openInVSCode/
-#                                       openInEditor's old per-editor literal
-#                                       "vscode://" calls into this one loop)
-#   - openInEditor() action:           if(!(X?.path))return!1; ... opens via
-#                                       shell.openExternal("vscode://file/…")
-#   - mailto/external link dialogs:    X.name (display) and X.icon.isEmpty()
-#     (duplicated across 2 chunks by the bundler, so 2 static matches)
+# WHAT THE 7 CALL SITES CONSUME (verified against the bundle):
+#   - isVSCodeInstalled():            return!!(X!=null&&X.path)            // truthiness only
+#   - openInVSCode()/openInEditor():  if(!(X!=null&&X.path))return!1; ... shell.openExternal("vscode://file/…")
+#                                                                          // .path only gates; the open is shell.openExternal
+#   - editor/Xcode detection:         o=!!(X!=null&&X.path)                // truthiness only
+#   - mailto/external link dialogs:   X.name (display) and X.icon.isEmpty()
 #   So the shim must return {path:<truthy when registered>, name:<display>, icon:{isEmpty:()=>!0}}
 #   or null. We map .path/.name to the handler's .desktop name (path) and a
 #   prettified name, and stub the icon (we don't ship editor icons on Linux; the
@@ -72,7 +68,8 @@ proc apply*(input: string): string =
   if PATCHED_MARKER in input:
     echo "  [OK] getApplicationInfoForProtocol Linux shim: already patched (skipped)"
   else:
-    let pattern1 = re2"""(\w+)\.app\.getApplicationInfoForProtocol\(([^()]+)\)"""
+    let pattern1 =
+      re2"""([\w$]+(?:\.[\w$]+)*)\.app\.getApplicationInfoForProtocol\(([^()]+)\)"""
     var count1 = 0
     result = result.replace(
       pattern1,
@@ -82,10 +79,20 @@ proc apply*(input: string): string =
         let a = s[m.group(1)]
         LINUX_SHIM_HEAD & a & "):" & v & ".app.getApplicationInfoForProtocol(" & a & "))",
     )
-    # Expected sites (v1.25927.0): 4
-    #   2× link-open dialogs (mailto/external, duplicated across chunks): name+icon
-    #   1× getInstalledEditors() detection loop over the {protocol,name} table
-    #   1× openInEditor() action gate
+    # Expected sites (clean .deb bundle, v1.26832.0): 4
+    #   2× link-open dialogs (mailto/external): read .name and .icon
+    #   2× <editorTable>.protocol: editor/Xcode installed-detection and the
+    #      open path, both of which gate on `.path` being truthy
+    #
+    # v1.24012.9 had 6: the two above pairs plus TWO copies of a legacy
+    # `isVSCodeInstalled(){…getApplicationInfoForProtocol("vscode://")}` method
+    # (duplicated across chunks). v1.26832.0 deleted both - `isVSCodeInstalled`
+    # and the "vscode://" call-site literal are gone from the bundle entirely,
+    # and VS Code detection now flows through the generic editor table
+    # (`{[VSCode]:{protocol:`vscode://`,name:`VS Code`}, …}`) consumed by the two
+    # `.protocol` sites. That is an upstream dedup, NOT native Linux support:
+    # both surviving sites still gate on Electron's macOS/Windows-only
+    # getApplicationInfoForProtocol, so the shim stays load-bearing.
     if count1 < 4:
       echo &"  [FAIL] getApplicationInfoForProtocol shim: {count1} match(es), expected >= 4"
       raise newException(
@@ -106,13 +113,13 @@ proc apply*(input: string): string =
   # Positively assert that exact guarded shape (not a loose substring that other
   # Linux patches could also produce) before accepting "already patched".
   let guardedPat =
-    re2"""&&process\.platform!=="linux"&&\([\w$]+=await [\w$]+\.app\.getFileIcon\([\w$]+\.path,\{size:[`"]normal[`"]\}\)\)"""
+    re2"""&&process\.platform!=="linux"&&\([\w$]+=await [\w$]+(?:\.[\w$]+)*\.app\.getFileIcon\([\w$]+\.path,\{size:"normal"\}\)\)"""
   var gm: RegexMatch2
   if result.find(guardedPat, gm):
     echo "  [OK] getFileIcon Linux guard: already present (skipped)"
   else:
     let pattern2 =
-      re2"""\(!(\w+)\|\|(\w+)\.isEmpty\(\)\)&&\((\w+)=await (\w+)\.app\.getFileIcon\((\w+)\.path,\{size:[`"]normal[`"]\}\)\)"""
+      re2"""\(!([\w$]+)\|\|([\w$]+)\.isEmpty\(\)\)&&\(([\w$]+)=await ([\w$]+(?:\.[\w$]+)*)\.app\.getFileIcon\(([\w$]+)\.path,\{size:["`]normal["`]\}\)\)"""
     var count2 = 0
     result = result.replace(
       pattern2,

@@ -7,11 +7,17 @@
 # build-time icon-type constant ("ico"/"template-image"/"png"; "png" on Linux
 # builds), whose png case picks the icon per desktop environment and theme:
 #
-#   let e;switch(G1r){
-#     case"ico": e=ELEC.nativeTheme.shouldUseDarkColors?"Tray-Win32-Dark.ico":"Tray-Win32.ico";break;
-#     case"template-image": e="TrayIconTemplate.png";break;
-#     case"png": e=ere()==="gnome"||ELEC.nativeTheme.shouldUseDarkColors?"TrayIconLinux-Dark.png":"TrayIconLinux.png";break
-#   }const t=...
+#   let e=CFG(`menuBarEnabled`),t;switch(`png`){
+#     case`ico`: t=ELEC.nativeTheme.shouldUseDarkColors?`Tray-Win32-Dark.ico`:`Tray-Win32.ico`;break;
+#     case`template-image`: t=`TrayIconTemplate.png`;break;
+#     case`png`: t=ere()===`gnome`||ELEC.nativeTheme.shouldUseDarkColors?`TrayIconLinux-Dark.png`:`TrayIconLinux.png`;break
+#   }let n=...
+#
+# (v1.26832.0 reshaped this: string literals became backticks, the switch
+# scrutinee is now the constant-folded literal `png` rather than a build-time
+# variable, and the icon variable is the second declarator of a shared `let`
+# instead of its own bare `let e;`. We therefore anchor purely on the three
+# case bodies and capture the icon variable from the `ico` case.)
 #
 # That heuristic is wrong for us: it only forces the dark icon on GNOME, and
 # otherwise follows nativeTheme. But Linux system trays are almost universally
@@ -40,18 +46,10 @@ proc apply*(input: string): string =
   # (minified, capture it) icon variable, anchored on the three case literals
   # so we pin the one correct site.
   # Variable names may contain $ (valid JS identifier), so use [\w$]+.
-  #
-  # v1.25927.0 changes: the icon var is no longer the sole declaration --
-  # it now sits after an unrelated initialized var in the same `let`
-  # (`let e=b.n(...),t;switch(...)`), so we lazily skip any leading
-  # declarations up to the last bare (uninitialized) one before `;switch(`.
-  # The switch discriminant is build-time-constant-folded to a literal
-  # string rather than a variable, and every string literal in this block
-  # (case labels + icon filenames + "gnome") shifted from double-quoted to
-  # backtick-quoted, so both are tolerated everywhere below. The gnome-check
-  # function is now a dotted call (e.g. `m.qi()`) instead of bare.
+  # Quoting is minifier-dependent (double quotes <=1.24012.x, backticks in
+  # 1.26832.0), so every literal accepts either via ["`].
   let pattern =
-    re"""let (?:[^;]+?,)?([\w$]+);switch\([^)]+\)\{case[`"]ico[`"]:\1=[\w$]+\.nativeTheme\.shouldUseDarkColors\?[`"]Tray-Win32-Dark\.ico[`"]:[`"]Tray-Win32\.ico[`"];break;case[`"]template-image[`"]:\1=[`"]TrayIconTemplate\.png[`"];break;case[`"]png[`"]:\1=[\w$]+(?:\.[\w$]+)?\(\)===[`"]gnome[`"]\|\|[\w$]+\.nativeTheme\.shouldUseDarkColors\?[`"]TrayIconLinux-Dark\.png[`"]:[`"]TrayIconLinux\.png[`"];break\}"""
+    re"""switch\((?:[\w$]+|["`][\w-]+["`])\)\{case["`]ico["`]:([\w$]+)=[\w$]+\.nativeTheme\.shouldUseDarkColors\?["`]Tray-Win32-Dark\.ico["`]:["`]Tray-Win32\.ico["`];break;case["`]template-image["`]:\1=["`]TrayIconTemplate\.png["`];break;case["`]png["`]:\1=[\w$]+(?:\.[\w$]+)*\(\)===["`]gnome["`]\|\|[\w$]+\.nativeTheme\.shouldUseDarkColors\?["`]TrayIconLinux-Dark\.png["`]:["`]TrayIconLinux\.png["`];break\}"""
   var count = 0
   result = input.replace(
     pattern,
@@ -63,8 +61,8 @@ proc apply*(input: string): string =
       # TrayIconLinux.png / TrayIconLinux-Dark.png and the false branch of
       # Eni()==="gnome"||... would otherwise pick the light TrayIconLinux.png).
       # Trailing ';' is required: the matched switch is followed immediately
-      # by `const t=...` with no line terminator, so without it the injected
-      # expression statement runs into `const` (Unexpected token 'const').
+      # by a `let`/`const` declaration with no line terminator, so without it
+      # the injected expression statement runs into it (Unexpected token).
       m.match & ";process.platform===\"linux\"&&(" & iconVar &
         "=\"TrayIconLinux-Dark.png\");",
   )

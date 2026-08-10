@@ -8,21 +8,17 @@
 # gated on a win32-only boolean, and the helper that pushes theme updates is
 # gated the same way.
 #
-# Two patches together do the job:
+# Three patches together do the job:
 #   1. Open the main BrowserWindow with frame:false + a real titleBarOverlay
 #      style object on Linux (plus autoHideMenuBar + icon).
 #   2. Open the setTitleBarOverlay theme-update gate for Linux so the
 #      overlay colors follow Anthropic's `Hb` flag and the OS theme.
-#
-# A third patch used to swap a transparent "#00000000" placeholder in the
-# overlay-style helper for the opaque window background (Electron on Wayland
-# paints that transparent value as a grey strip). v1.26832.0 moved the helper
-# into a code-split chunk and computes an opaque color there itself, so the
-# placeholder site is gone and the swap is upstreamed. The removed pattern
-# matched any hex color, and on v1.26832.0 it matched the two theme branches
-# of the NEW helper instead, splicing a captured identifier from index.js
-# into a chunk scope where it does not resolve (TypeError on every
-# nativeTheme change; white main window, #installed-1.26832.0-2).
+#   3. Force Anthropic's plain window background into the overlay style in
+#      Linux integrated mode, instead of the value upstream feeds through its
+#      alpha-blend helper. Electron on Wayland has painted that blended value
+#      as a grey strip, so without this swap the overlay looks like a grey
+#      block. (The literal "#00000000" placeholder this originally targeted is
+#      long gone; the swap site is the same style object either way.)
 #
 # All three behaviors gate on CLAUDE_NATIVE_TITLEBAR: unset (or anything
 # other than "1") = integrated mode; "1" = restore the GTK frame. The
@@ -60,11 +56,15 @@ proc apply*(input: string): string =
   result = input
 
   # Anthropic identifiers (minified, renamed between releases):
-  #   bgFn      e.g. "G$" -- window background color, called as G$().
-  #   electron  e.g. "cA" -- alias for require("electron"), used for
-  #                          nativeTheme.shouldUseDarkColors.
+  #   bgFn      e.g. "G$" / "T.r" -- window background color, called as bgFn().
+  #   electron  e.g. "cA" / "R"   -- alias for require("electron"), used for
+  #                                  nativeTheme.shouldUseDarkColors.
+  # Both are captured from the main-window options site, which since v1.26832.0
+  # lives in index.js itself; they are only ever emitted back into that same
+  # site (patch 1). Patch 3 sits in a *different* code-split chunk and captures
+  # its own local background helper -- see there.
   let bgFn = result.capture(
-    re2"""backgroundColor:([\w$]+(?:\.[\w$]+)?)\(\),opacity:""",
+    re2"""backgroundColor:([\w$]+(?:\.[\w$]+)*)\(\),opacity:""",
     "backgroundColor function",
   )
   let electron = result.capture(
@@ -83,8 +83,11 @@ proc apply*(input: string): string =
     "{color:" & bgFn & "(),symbolColor:" & electron &
     ".nativeTheme.shouldUseDarkColors?\"#fff\":\"#000\",height:36}"
   var n = 0
+  # v1.26832.0: `"hidden"` became a template literal and the titleBarOverlay
+  # value is the constant-folded `!0` rather than a win32-only variable, so the
+  # value slot accepts a boolean literal as well as an identifier chain.
   result = result.replace(
-    re2"""titleBarStyle:[`"]hidden[`"],titleBarOverlay:([\w$]+|!0|!1)""",
+    re2"""titleBarStyle:["`]hidden["`],titleBarOverlay:(!\d|[\w$]+(?:\.[\w$]+)*)""",
     proc(m: RegexMatch2, s: string): string =
       inc n
       "titleBarStyle:" & LINUX_NATIVE & "?\"default\":\"hidden\"," & "titleBarOverlay:(" &
@@ -136,6 +139,34 @@ proc apply*(input: string): string =
       )
   else:
     raise newException(ValueError, &"setTitleBarOverlay gate: {n} (expected 0 or 1)")
+
+  # Patch 3: opaque-color swap inside the helper that builds the overlay
+  # style. The non-Hb branch uses a background value that upstream may run
+  # through an alpha-blend helper; on Linux Wayland that has produced a grey
+  # strip instead of the window background. Force the plain background color
+  # in Linux integrated mode. Two occurrences: one per theme.
+  #
+  # Since v1.26832.0 this helper lives in its OWN code-split chunk, separate
+  # from the main-window options patched above. `bgFn` captured up there is a
+  # binding of the index.js chunk and is NOT in scope here -- emitting it would
+  # be a ReferenceError at runtime. Capture the helper's own background
+  # function from the declarator that feeds the style object instead.
+  let localBg = result.capture(
+    re2"""=[\w$]+\?[\w$]+\(([\w$]+)\(\)\):[\w$]+\(\),[\w$]+=[\w$]+\.nativeTheme\.shouldUseDarkColors\?\{color:""",
+    "titleBarOverlay-helper background function",
+  )
+  n = 0
+  result = result.replace(
+    re2"""(\{color:[\w$]+\?["`]#[0-9a-fA-F]+["`]:)([\w$]+)(,symbolColor:)""",
+    proc(m: RegexMatch2, s: string): string =
+      inc n
+      let bgVar = s[m.group(1)]
+      s[m.group(0)] & "(" & LINUX_INTEGRATED & ")?" & localBg & "():" & bgVar &
+        s[m.group(2)],
+  )
+  if n != 2:
+    raise newException(ValueError, &"titleBarOverlay background swap: {n}/2")
+  echo &"  [OK] overlay background -> {localBg}() in Linux integrated mode: {n}"
 
 when isMainModule:
   if paramCount() != 1:
