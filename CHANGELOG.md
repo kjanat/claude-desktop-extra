@@ -16,6 +16,10 @@ The Deployment panel gains `modelPrefer1mContext`; the GrowthBook catalog and ve
 
 The temporary `skip_aur` release input is removed. The fail-fast AUR preflight remains.
 
+### Repro probes cannot claim production tags
+
+The testing-only reproducibility workflow now always publishes under a unique `repro-test-*` prerelease tag. It can no longer race Build & Release for `v<version>` and leave a one-asset release blocking the production release.
+
 ## 2026-08-10
 
 ### Synced with upstream claude-desktop-extra

@@ -329,20 +329,11 @@ jobs:
         run: |
           shopt -s nullglob
 
-          if [[ "${GITHUB_REF}" == "refs/heads/master" ]]; then
-            RELEASE="v${version}"
-            if gh release view "${RELEASE}" &>/dev/null; then
-              RELEASE="v${version}-${GITHUB_RUN_NUMBER}"
-            fi
-            TITLE="Claude Desktop ${version}"
-            RELEASE_FLAGS=(--latest=false)
-            INTRO="Claude Desktop ${version} for Linux ${arch}, repackaged from Anthropic's official .deb."
-          else
-            RELEASE="repro-test-${version}-${GITHUB_RUN_NUMBER}"
-            TITLE="Repro probe ${version} (run ${GITHUB_RUN_NUMBER})"
-            RELEASE_FLAGS=(--prerelease)
-            INTRO="Reproducibility probe for Claude Desktop ${version}, ${arch}."
-          fi
+          # Testing workflow: never claim the production v<version> namespace.
+          RELEASE="repro-test-${version}-${GITHUB_RUN_NUMBER}"
+          TITLE="Repro probe ${version} (run ${GITHUB_RUN_NUMBER})"
+          RELEASE_FLAGS=(--prerelease)
+          INTRO="Reproducibility probe for Claude Desktop ${version}, ${arch}."
           printf "Release:\t\t%s\n" "${RELEASE}"
 
           TARBALL=(claude-desktop-*-linux.tar.gz)
