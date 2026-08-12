@@ -2,6 +2,20 @@
 
 All notable changes to the claude-desktop-extra packages will be documented in this file.
 
+## 2026-08-12
+
+### Claude Desktop v1.28929.0 - two patches re-fitted, one retired as upstreamed
+
+The v1.28929.0 auto-release failed on two moved anchors. `fix_computer_use_linux` now follows upstream's reworded desktop-shell hint and permission-tier `.find(...)` predicate, returning the matching plasmashell app object for KDE. `fix_ion_dist_linux` now locates the org-plugins mount path and its platform ternary independently after upstream split them across SPA chunks.
+
+The audit retired `fix_computer_use_tcc`: upstream now registers a ComputerUseTcc implementation on every platform. The remaining 44 patches stay load-bearing; upstream still ships no Linux Computer Use input or screenshot backend.
+
+The Deployment panel gains `modelPrefer1mContext`; the GrowthBook catalog and version-sensitive baseline docs were refreshed for v1.28929.0. Upstream also added local session import, staged 1P/3P hybrid transition, SSH reconnect, queued steered-message delivery, and a full/click/read Computer Use permission-tier framework.
+
+### AUR is back
+
+The temporary `skip_aur` release input is removed. The fail-fast AUR preflight remains.
+
 ## 2026-08-10
 
 ### Synced with upstream claude-desktop-extra

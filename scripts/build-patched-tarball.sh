@@ -622,9 +622,9 @@ fi
 
 # Create the tarball. amd64 → no suffix; arm64 → -aarch64 (matches PKGBUILD/Nix/release naming).
 case "${DEB_ARCH}" in
-	arm64) TARBALL_FILE="${OUTPUT_DIR}/claude-desktop-${VERSION}-linux-aarch64.tar.gz" ;;
-	amd64) TARBALL_FILE="${OUTPUT_DIR}/claude-desktop-${VERSION}-linux.tar.gz" ;;
-	*) TARBALL_FILE="${OUTPUT_DIR}/claude-desktop-${VERSION}-linux-${DEB_ARCH}.tar.gz" ;;
+arm64) TARBALL_FILE="${OUTPUT_DIR}/claude-desktop-${VERSION}-linux-aarch64.tar.gz" ;;
+amd64) TARBALL_FILE="${OUTPUT_DIR}/claude-desktop-${VERSION}-linux.tar.gz" ;;
+*) TARBALL_FILE="${OUTPUT_DIR}/claude-desktop-${VERSION}-linux-${DEB_ARCH}.tar.gz" ;;
 esac
 log_info "Creating tarball: ${TARBALL_FILE}"
 
