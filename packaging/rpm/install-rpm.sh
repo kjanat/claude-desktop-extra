@@ -9,40 +9,41 @@ REPO_URL="https://kjanat.github.io/claude-desktop-extra"
 REPO_FILE="/etc/yum.repos.d/claude-desktop.repo"
 
 # Check root
-if [ "$(id -u)" -ne 0 ]; then
+USER_ID="$(id -u)"
+if [[ "${USER_ID}" -ne 0 ]]; then
 	echo "Error: This script must be run as root (use sudo)."
 	exit 1
 fi
 
 # Detect and validate architecture
 ARCH="$(uname -m)"
-case "$ARCH" in
+case "${ARCH}" in
 	x86_64 | aarch64) ;;
 	*)
-		echo "Error: Unsupported architecture: $ARCH (supported: x86_64, aarch64)"
+		echo "Error: Unsupported architecture: ${ARCH} (supported: x86_64, aarch64)"
 		exit 1
 		;;
 esac
-echo "  Detected architecture: $ARCH"
+echo "  Detected architecture: ${ARCH}"
 
 echo "Setting up Claude Desktop RPM repository..."
 
 # Import GPG key
-rpm --import "$REPO_URL/gpg-key.asc"
+rpm --import "${REPO_URL}/gpg-key.asc"
 echo "  GPG key imported"
 
 # Add repository
-cat >"$REPO_FILE" <<EOF
+cat >"${REPO_FILE}" <<EOF
 [claude-desktop]
 name=Claude Desktop for Linux
-baseurl=$REPO_URL/rpm/
+baseurl=${REPO_URL}/rpm/
 enabled=1
 gpgcheck=1
-gpgkey=$REPO_URL/gpg-key.asc
+gpgkey=${REPO_URL}/gpg-key.asc
 repo_gpgcheck=1
 metadata_expire=300
 EOF
-echo "  Repository added to $REPO_FILE"
+echo "  Repository added to ${REPO_FILE}"
 
 # Update package cache
 if command -v dnf &>/dev/null; then

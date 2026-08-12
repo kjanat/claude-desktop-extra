@@ -22,7 +22,7 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TESTS_DIR="$SCRIPT_DIR/tests"
+TESTS_DIR="${SCRIPT_DIR}/tests"
 
 # Every harness must be accounted for. If a bad glob, a stray file or a forgotten
 # `git mv` changes what gets discovered, this fails rather than quietly reporting
@@ -33,51 +33,61 @@ EXPECTED_TEST_HARNESSES=10
 CATEGORIES=(community core)
 
 usage() {
-    echo "Usage: $(basename "$0") [community|core]" >&2
-    exit 2
+	echo "Usage: $(basename "$0") [community|core]" >&2
+	exit 2
 }
 
 case "${1-}" in
-    "")            ENFORCE_COUNT=true ;;
-    community|core) CATEGORIES=("$1"); ENFORCE_COUNT=false ;;
-    -h|--help)     usage ;;
-    *)             echo "[ERROR] Unknown category: $1" >&2; usage ;;
+	"") ENFORCE_COUNT=true ;;
+	community | core)
+		CATEGORIES=("$1")
+		ENFORCE_COUNT=false
+		;;
+	-h | --help) usage ;;
+	*)
+		echo "[ERROR] Unknown category: $1" >&2
+		usage
+		;;
 esac
 
 if ! command -v node >/dev/null 2>&1; then
-    echo "[ERROR] node is required to run the feature test harnesses" >&2
-    exit 1
+	echo "[ERROR] node is required to run the feature test harnesses" >&2
+	exit 1
 fi
 
 # ---------------------------------------------------------------- discovery
 SUITES=()
 for cat in "${CATEGORIES[@]}"; do
-    dir="$TESTS_DIR/$cat"
-    if [ ! -d "$dir" ]; then
-        echo "[ERROR] Missing test category directory: $dir" >&2
-        exit 1
-    fi
-    found=()
-    while IFS= read -r f; do
-        found+=("$f")
-    done < <(find "$dir" -maxdepth 1 -name '*.mjs' -type f | sort)
-    if [ ${#found[@]} -eq 0 ]; then
-        echo "[ERROR] No test harnesses found in $dir" >&2
-        echo "        A category directory must never be empty - if the tests" >&2
-        echo "        moved, fix this runner; do NOT ship a build validated by" >&2
-        echo "        an empty suite." >&2
-        exit 1
-    fi
-    SUITES+=("${found[@]}")
+	dir="${TESTS_DIR}/${cat}"
+	if [[ ! -d "${dir}" ]]; then
+		echo "[ERROR] Missing test category directory: ${dir}" >&2
+		exit 1
+	fi
+	found=()
+	for f in "${dir}"/*.mjs; do
+		[[ -f "${f}" ]] || continue
+		found+=("${f}")
+	done
+	if [[ ${#found[@]} -eq 0 ]]; then
+		echo "[ERROR] No test harnesses found in ${dir}" >&2
+		echo "        A category directory must never be empty - if the tests" >&2
+		echo "        moved, fix this runner; do NOT ship a build validated by" >&2
+		echo "        an empty suite." >&2
+		exit 1
+	fi
+	SUITES+=("${found[@]}")
 done
 
-if [ "$ENFORCE_COUNT" = true ] && [ ${#SUITES[@]} -ne "$EXPECTED_TEST_HARNESSES" ]; then
-    echo "[ERROR] Discovered ${#SUITES[@]} test harness(es), expected $EXPECTED_TEST_HARNESSES." >&2
-    echo "        Searched: ${TESTS_DIR}/{$(IFS=,; echo "${CATEGORIES[*]}")}/*.mjs" >&2
-    echo "        If you added or removed a harness, update" >&2
-    echo "        EXPECTED_TEST_HARNESSES in this script." >&2
-    echo "        Otherwise a harness went missing - do NOT ship this build." >&2
-    exit 1
+if [[ "${ENFORCE_COUNT}" = true ]] && [[ ${#SUITES[@]} -ne "${EXPECTED_TEST_HARNESSES}" ]]; then
+	echo "[ERROR] Discovered ${#SUITES[@]} test harness(es), expected ${EXPECTED_TEST_HARNESSES}." >&2
+	echo "        Searched: ${TESTS_DIR}/{$(
+		IFS=,
+		echo "${CATEGORIES[*]}"
+	)}/*.mjs" >&2
+	echo "        If you added or removed a harness, update" >&2
+	echo "        EXPECTED_TEST_HARNESSES in this script." >&2
+	echo "        Otherwise a harness went missing - do NOT ship this build." >&2
+	exit 1
 fi
 
 # ---------------------------------------------------------------- run
@@ -91,38 +101,38 @@ SKIPPED=0
 FAILED_NAMES=()
 
 for suite in "${SUITES[@]}"; do
-    rel="${suite#"$SCRIPT_DIR"/}"
-    echo ""
-    echo "--- $rel"
-    out=$(node "$suite" 2>&1) && rc=0 || rc=$?
-    echo "$out" | sed 's/^/    /'
-    case $rc in
-        0)
-            echo "  PASS  $rel"
-            PASSED=$((PASSED + 1))
-            ;;
-        3)
-            echo "  SKIP  $rel (the harness reported a missing tool)"
-            SKIPPED=$((SKIPPED + 1))
-            ;;
-        *)
-            echo "  FAIL  $rel (exit $rc)"
-            FAILED=$((FAILED + 1))
-            FAILED_NAMES+=("$rel")
-            ;;
-    esac
+	rel="${suite#"${SCRIPT_DIR}"/}"
+	echo ""
+	echo "--- ${rel}"
+	out=$(node "${suite}" 2>&1) && rc=0 || rc=$?
+	printf '    %s\n' "${out//$'\n'/$'\n    '}"
+	case ${rc} in
+		0)
+			echo "  PASS  ${rel}"
+			PASSED=$((PASSED + 1))
+			;;
+		3)
+			echo "  SKIP  ${rel} (the harness reported a missing tool)"
+			SKIPPED=$((SKIPPED + 1))
+			;;
+		*)
+			echo "  FAIL  ${rel} (exit ${rc})"
+			FAILED=$((FAILED + 1))
+			FAILED_NAMES+=("${rel}")
+			;;
+	esac
 done
 
 echo ""
 echo "==================================================="
-echo "Summary: $PASSED passed, $FAILED failed, $SKIPPED skipped (of ${#SUITES[@]})"
+echo "Summary: ${PASSED} passed, ${FAILED} failed, ${SKIPPED} skipped (of ${#SUITES[@]})"
 echo "==================================================="
 
-if [ "$FAILED" -gt 0 ]; then
-    for name in "${FAILED_NAMES[@]}"; do
-        echo "::error::feature test harness failed: $name"
-    done
-    exit 1
+if [[ "${FAILED}" -gt 0 ]]; then
+	for name in "${FAILED_NAMES[@]}"; do
+		echo "::error::feature test harness failed: ${name}"
+	done
+	exit 1
 fi
 
 exit 0

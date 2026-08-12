@@ -32,11 +32,11 @@ if [[ "${1:-}" = "--arch" ]]; then
 fi
 
 case "${DEB_ARCH}" in
-amd64 | arm64) ;;
-*)
-	log_error "Unsupported architecture: ${DEB_ARCH} (supported: amd64, arm64)"
-	exit 1
-	;;
+	amd64 | arm64) ;;
+	*)
+		log_error "Unsupported architecture: ${DEB_ARCH} (supported: amd64, arm64)"
+		exit 1
+		;;
 esac
 
 # Cowork runs its agent workspace in a lightweight KVM VM, which needs QEMU +
@@ -47,12 +47,12 @@ esac
 # differ (qemu-system-arm ships qemu-system-aarch64; qemu-efi-aarch64 is the
 # AAVMF firmware). /dev/kvm access still needs the user in the "kvm" group.
 case "${DEB_ARCH}" in
-amd64) COWORK_RECOMMENDS="qemu-system-x86, ovmf, virtiofsd" ;;
-arm64) COWORK_RECOMMENDS="qemu-system-arm, qemu-efi-aarch64, virtiofsd" ;;
-*)
-	log_error "No Cowork recommends defined for ${DEB_ARCH}"
-	exit 1
-	;;
+	amd64) COWORK_RECOMMENDS="qemu-system-x86, ovmf, virtiofsd" ;;
+	arm64) COWORK_RECOMMENDS="qemu-system-arm, qemu-efi-aarch64, virtiofsd" ;;
+	*)
+		log_error "No Cowork recommends defined for ${DEB_ARCH}"
+		exit 1
+		;;
 esac
 
 # Parse positional arguments

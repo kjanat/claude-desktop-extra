@@ -25,8 +25,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_DIR="$(dirname "$SCRIPT_DIR")"
-PATCHES_DIR="${1:-$REPO_DIR/patches}"
+REPO_DIR="$(dirname "${SCRIPT_DIR}")"
+PATCHES_DIR="${1:-${REPO_DIR}/patches}"
 
 echo "=== Checking for sibling-file no-op anti-pattern in patches/*/*.nim ==="
 
@@ -50,35 +50,36 @@ SMELL_RE='(parentDir\([[:alnum:]_]+\)[[:space:]]*/[[:space:]]*"|\.parentDir[[:sp
 # a literal `#`. We drop any line whose first non-space char is `#`, and for inline
 # comments we cut at ` #`.
 hits=""
-for f in "$PATCHES_DIR"/*/*.nim; do
-  [ -f "$f" ] || continue
-  while IFS= read -r line; do
-    lineno="${line%%:*}"
-    text="${line#*:}"
-    # Skip full-line comments (first non-space char is #)
-    trimmed="${text#"${text%%[![:space:]]*}"}"
-    case "$trimmed" in
-      '#'*) continue ;;
-    esac
-    # Cut inline comments (space-hash) before testing
-    code="${text%% #*}"
-    if printf '%s' "$code" | grep -qE "$SMELL_RE"; then
-      hits="${hits}${f}:${lineno}:${text}"$'\n'
-    fi
-  done < <(grep -nE "$SMELL_RE" "$f" 2>/dev/null || true)
+for f in "${PATCHES_DIR}"/*/*.nim; do
+	[[ -f "${f}" ]] || continue
+	while IFS= read -r line; do
+		lineno="${line%%:*}"
+		text="${line#*:}"
+		# Skip full-line comments (first non-space char is #)
+		trimmed="${text#"${text%%[![:space:]]*}"}"
+		case "${trimmed}" in
+			'#'*) continue ;;
+			*) ;;
+		esac
+		# Cut inline comments (space-hash) before testing
+		code="${text%% #*}"
+		if printf '%s' "${code}" | grep -qE "${SMELL_RE}"; then
+			hits="${hits}${f}:${lineno}:${text}"$'\n'
+		fi
+	done < <(grep -nE "${SMELL_RE}" "${f}" 2>/dev/null || true)
 done
 hits="${hits%$'\n'}"
 
-if [ -n "$hits" ]; then
-  echo "::error::Found sibling-file no-op anti-pattern (a patch derives a SECOND"
-  echo "::error::file path from its staged target — the orchestrator stages each"
-  echo "::error::@patch-target in isolation, so this silently patches NOTHING)."
-  echo "::error::Give the second file its own @patch-target patch instead."
-  echo "::error::See scripts/check-patch-sibling-noop.sh header for the full why."
-  echo
-  echo "Offending lines:"
-  echo "$hits" | sed 's/^/  /'
-  exit 1
+if [[ -n "${hits}" ]]; then
+	echo "::error::Found sibling-file no-op anti-pattern (a patch derives a SECOND"
+	echo "::error::file path from its staged target — the orchestrator stages each"
+	echo "::error::@patch-target in isolation, so this silently patches NOTHING)."
+	echo "::error::Give the second file its own @patch-target patch instead."
+	echo "::error::See scripts/check-patch-sibling-noop.sh header for the full why."
+	echo
+	echo "Offending lines:"
+	printf '  %s\n' "${hits//$'\n'/$'\n  '}"
+	exit 1
 fi
 
 echo "OK: no patch derives a second file path from its staged target."

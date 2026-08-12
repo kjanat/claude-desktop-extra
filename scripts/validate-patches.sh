@@ -17,15 +17,15 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-PATCHES_DIR="$PROJECT_DIR/patches"
+PROJECT_DIR="$(dirname "${SCRIPT_DIR}")"
+PATCHES_DIR="${PROJECT_DIR}/patches"
 
 APP_CONTENTS="${1:-.}"
 
 # Check if the directory looks like an app.asar.contents
-if [ ! -d "$APP_CONTENTS/.vite" ]; then
+if [[ ! -d "${APP_CONTENTS}/.vite" ]]; then
 	echo "Error: Invalid app.asar.contents directory"
-	echo "Expected to find .vite/ directory in: $APP_CONTENTS"
+	echo "Expected to find .vite/ directory in: ${APP_CONTENTS}"
 	echo ""
 	echo "Usage: $0 <path_to_app.asar.contents> [path_to_deb_tree]"
 	echo ""
@@ -44,12 +44,12 @@ DEB_TREE="${2:-}"
 
 # Compile Nim patches first (required for validation)
 echo "Compiling Nim patches..."
-"$SCRIPT_DIR/compile-nim-patches.sh"
+"${SCRIPT_DIR}/compile-nim-patches.sh"
 
 echo "==================================="
 echo "  Patch Validation Report"
 echo "==================================="
-echo "App contents: $APP_CONTENTS"
+echo "App contents: ${APP_CONTENTS}"
 echo ""
 
 TOTAL=0
@@ -59,43 +59,56 @@ SKIPPED=0
 
 # Patch sources live one level down, in the category subdirs (linux/, core/,
 # community/). The */ glob picks up any category without needing edits here.
-for patch_file in "$PATCHES_DIR"/*/*.nim "$PATCHES_DIR"/*/*.js; do
-	[ -f "$patch_file" ] || continue
+for patch_file in "${PATCHES_DIR}"/*/*.nim "${PATCHES_DIR}"/*/*.js; do
+	[[ -f "${patch_file}" ]] || continue
 
 	TOTAL=$((TOTAL + 1))
-	filename=$(basename "$patch_file")
+	filename=$(basename "${patch_file}")
 	# Compiled binary sits next to its source, so derive it from the full path -
 	# basename alone would drop the category subdir.
 	nim_bin="${patch_file%.nim}"
 
-	# Extract metadata
-	target=$(grep -m1 '@patch-target:' "$patch_file" 2>/dev/null | sed 's/.*@patch-target:[[:space:]]*//' | tr -d '\r' || echo "")
-	patch_type=$(grep -m1 '@patch-type:' "$patch_file" 2>/dev/null | sed 's/.*@patch-type:[[:space:]]*//' | tr -d '\r' || echo "")
+	# Extract the first value for each metadata key.
+	target=""
+	patch_type=""
+	target_found=0
+	patch_type_found=0
+	while IFS= read -r metadata_line; do
+		if [[ ${target_found} -eq 0 && "${metadata_line}" =~ @patch-target:[[:space:]]*(.*) ]]; then
+			target="${BASH_REMATCH[1]//$'\r'/}"
+			target_found=1
+		fi
+		if [[ ${patch_type_found} -eq 0 && "${metadata_line}" =~ @patch-type:[[:space:]]*(.*) ]]; then
+			patch_type="${BASH_REMATCH[1]//$'\r'/}"
+			patch_type_found=1
+		fi
+	done <"${patch_file}"
 
-	if [ -z "$target" ]; then
-		echo "[$filename]"
+	if [[ -z "${target}" ]]; then
+		echo "[${filename}]"
 		echo "  Status: SKIP (no @patch-target metadata)"
 		SKIPPED=$((SKIPPED + 1))
 		echo ""
 		continue
 	fi
 
-	echo "[$filename]"
-	echo "  Target: $target"
-	echo "  Type: $patch_type"
+	echo "[${filename}]"
+	echo "  Target: ${target}"
+	echo "  Type: ${patch_type}"
 
 	# Resolve the target path (handle glob patterns)
-	if [[ "$target" == *"*"* ]]; then
-		dir_part=$(dirname "$target")
-		file_pattern=$(basename "$target")
-		search_dir="$APP_CONTENTS/${dir_part#app.asar.contents/}"
-		actual_target=$(find "$search_dir" -name "$file_pattern" 2>/dev/null | head -1)
+	if [[ "${target}" == *"*"* ]]; then
+		dir_part=$(dirname "${target}")
+		file_pattern=$(basename "${target}")
+		search_dir="${APP_CONTENTS}/${dir_part#app.asar.contents/}"
+		actual_target=""
+		IFS= read -r actual_target < <(find "${search_dir}" -name "${file_pattern}" -print -quit 2>/dev/null) || true
 	else
-		actual_target="$APP_CONTENTS/${target#app.asar.contents/}"
+		actual_target="${APP_CONTENTS}/${target#app.asar.contents/}"
 	fi
 
 	# For replace patches, target doesn't need to exist
-	if [ "$patch_type" = "replace" ]; then
+	if [[ "${patch_type}" = "replace" ]]; then
 		echo "  Resolved: (will be created)"
 		echo "  Status: PASS (file replacement)"
 		PASSED=$((PASSED + 1))
@@ -103,22 +116,22 @@ for patch_file in "$PATCHES_DIR"/*/*.nim "$PATCHES_DIR"/*/*.js; do
 		continue
 	fi
 
-	if [ "$patch_type" = "nim-dir" ]; then
+	if [[ "${patch_type}" = "nim-dir" ]]; then
 		# nim-dir targets live in the .deb's resources tree, NOT inside
 		# app.asar - they can never resolve under $APP_CONTENTS. Probe the
 		# explicit deb tree argument, then the conventional sibling layout
 		# (tmp/app.asar.contents next to tmp/extract/), and only SKIP - not
 		# FAIL - when neither is available: real builds exercise these
 		# patches via build-patched-tarball.sh against the full tree.
-		if [ -z "$actual_target" ] || [ ! -d "$actual_target" ]; then
-			sibling_tree="$(dirname "$APP_CONTENTS")/extract/usr/lib/claude-desktop"
-			for tree in "$DEB_TREE" "$sibling_tree"; do
-				[ -n "$tree" ] && [ -d "$tree/$target" ] || continue
-				actual_target="$tree/$target"
+		if [[ -z "${actual_target}" ]] || [[ ! -d "${actual_target}" ]]; then
+			sibling_tree="$(dirname "${APP_CONTENTS}")/extract/usr/lib/claude-desktop"
+			for tree in "${DEB_TREE}" "${sibling_tree}"; do
+				[[ -n "${tree}" ]] && [[ -d "${tree}/${target}" ]] || continue
+				actual_target="${tree}/${target}"
 				break
 			done
 		fi
-		if [ -z "$actual_target" ] || [ ! -d "$actual_target" ]; then
+		if [[ -z "${actual_target}" ]] || [[ ! -d "${actual_target}" ]]; then
 			echo "  Status: SKIP (target lives in the .deb tree, not app.asar;"
 			echo "          pass the extracted tree as 2nd arg or extract the .deb"
 			echo "          to a sibling ../extract/ - build-patched-tarball.sh"
@@ -127,19 +140,19 @@ for patch_file in "$PATCHES_DIR"/*/*.nim "$PATCHES_DIR"/*/*.js; do
 			echo ""
 			continue
 		fi
-	elif [ -z "$actual_target" ] || [ ! -f "$actual_target" ]; then
+	elif [[ -z "${actual_target}" ]] || [[ ! -f "${actual_target}" ]]; then
 		echo "  Status: FAIL (target file not found)"
 		FAILED=$((FAILED + 1))
 		echo ""
 		continue
 	fi
 
-	echo "  Resolved: $actual_target"
+	echo "  Resolved: ${actual_target}"
 
 	# For Nim patches, run the compiled binary on a copy
-	if [ "$patch_type" = "nim" ]; then
-		if [ ! -x "$nim_bin" ]; then
-			echo "  Status: FAIL (compiled binary not found: $nim_bin)"
+	if [[ "${patch_type}" = "nim" ]]; then
+		if [[ ! -x "${nim_bin}" ]]; then
+			echo "  Status: FAIL (compiled binary not found: ${nim_bin})"
 			FAILED=$((FAILED + 1))
 			echo ""
 			continue
@@ -149,26 +162,30 @@ for patch_file in "$PATCHES_DIR"/*/*.nim "$PATCHES_DIR"/*/*.js; do
 		# Code-split bundles (v1.19367.0+): stage the stub + all content-hashed
 		# sibling chunks as one concatenation, mirroring apply_patches.py, so
 		# patch match counts see the whole logical bundle.
-		target_dir=$(dirname "$actual_target")
-		target_base=$(basename "$actual_target")
+		target_dir=$(dirname "${actual_target}")
+		target_base=$(basename "${actual_target}")
 		target_stem="${target_base%.js}"
-		if compgen -G "$target_dir/$target_stem*.chunk-*.js" >/dev/null; then
-			cat "$actual_target" >"$tmp_file"
-			for chunk in "$target_dir/$target_stem"*.chunk-*.js; do
-				printf '\n/*__CDB_SPLIT__%s__*/\n' "$(basename "$chunk")" >>"$tmp_file"
-				cat "$chunk" >>"$tmp_file"
+		if compgen -G "${target_dir}/${target_stem}*.chunk-*.js" >/dev/null; then
+			cat "${actual_target}" >"${tmp_file}"
+			for chunk in "${target_dir}/${target_stem}"*.chunk-*.js; do
+				printf '\n/*__CDB_SPLIT__%s__*/\n' "$(basename "${chunk}")" >>"${tmp_file}"
+				cat "${chunk}" >>"${tmp_file}"
 			done
 		else
-			cp "$actual_target" "$tmp_file"
+			cp "${actual_target}" "${tmp_file}"
 		fi
 
 		# Same `&& ||` idiom as the nim-dir branch below: under `set -e` a bare
 		# failing command-substitution assignment terminates the whole script,
 		# so a single failing patch would cut the report short instead of being
 		# counted as FAIL.
-		output=$("$nim_bin" "$tmp_file" 2>&1) && result=0 || result=$?
-		echo "$output" | sed 's/^/  /'
-		if [ $result -eq 0 ]; then
+		output=$("${nim_bin}" "${tmp_file}" 2>&1) && result=0 || result=$?
+		if [[ -n "${output}" ]]; then
+			printf '  %s\n' "${output//$'\n'/$'\n  '}"
+		else
+			echo ""
+		fi
+		if [[ "${result}" -eq 0 ]]; then
 			echo "  Status: PASS"
 			PASSED=$((PASSED + 1))
 		else
@@ -176,23 +193,27 @@ for patch_file in "$PATCHES_DIR"/*/*.nim "$PATCHES_DIR"/*/*.js; do
 			FAILED=$((FAILED + 1))
 		fi
 
-		rm -f "$tmp_file"
-	elif [ "$patch_type" = "nim-dir" ]; then
+		rm -f "${tmp_file}"
+	elif [[ "${patch_type}" = "nim-dir" ]]; then
 		# nim-dir patches take a directory argument and locate their
 		# content-hashed target file inside it (e.g. ion-dist SPA bundles)
-		if [ ! -x "$nim_bin" ]; then
-			echo "  Status: FAIL (compiled binary not found: $nim_bin)"
+		if [[ ! -x "${nim_bin}" ]]; then
+			echo "  Status: FAIL (compiled binary not found: ${nim_bin})"
 			FAILED=$((FAILED + 1))
 			echo ""
 			continue
 		fi
 
 		tmp_dir=$(mktemp -d)
-		cp -r "$actual_target"/. "$tmp_dir"/
+		cp -r "${actual_target}"/. "${tmp_dir}"/
 
-		output=$("$nim_bin" "$tmp_dir" 2>&1) && result=0 || result=$?
-		echo "$output" | sed 's/^/  /'
-		if [ $result -eq 0 ]; then
+		output=$("${nim_bin}" "${tmp_dir}" 2>&1) && result=0 || result=$?
+		if [[ -n "${output}" ]]; then
+			printf '  %s\n' "${output//$'\n'/$'\n  '}"
+		else
+			echo ""
+		fi
+		if [[ "${result}" -eq 0 ]]; then
 			echo "  Status: PASS"
 			PASSED=$((PASSED + 1))
 		else
@@ -200,9 +221,9 @@ for patch_file in "$PATCHES_DIR"/*/*.nim "$PATCHES_DIR"/*/*.js; do
 			FAILED=$((FAILED + 1))
 		fi
 
-		rm -rf "$tmp_dir"
+		rm -rf "${tmp_dir}"
 	else
-		echo "  Status: SKIP (unknown type: $patch_type)"
+		echo "  Status: SKIP (unknown type: ${patch_type})"
 		SKIPPED=$((SKIPPED + 1))
 	fi
 
@@ -224,14 +245,14 @@ if command -v node >/dev/null 2>&1; then
 	# The RUNNER's exit status decides, never the pipeline's: `runner | sed`
 	# reports sed's status, which is always 0.
 	FT_LOG="$(mktemp)"
-	if "$SCRIPT_DIR/run-feature-tests.sh" >"$FT_LOG" 2>&1; then
+	if "${SCRIPT_DIR}/run-feature-tests.sh" >"${FT_LOG}" 2>&1; then
 		FT_RC=0
 	else
 		FT_RC=$?
 	fi
-	sed 's/^/  /' "$FT_LOG"
-	rm -f "$FT_LOG"
-	if [ "$FT_RC" -eq 0 ]; then
+	sed 's/^/  /' "${FT_LOG}"
+	rm -f "${FT_LOG}"
+	if [[ "${FT_RC}" -eq 0 ]]; then
 		echo "  Status: PASS"
 		PASSED=$((PASSED + 1))
 	else
@@ -248,15 +269,15 @@ echo ""
 echo "==================================="
 echo "  Summary"
 echo "==================================="
-echo "  Total:   $TOTAL"
-echo "  Passed:  $PASSED"
-echo "  Failed:  $FAILED"
-echo "  Skipped: $SKIPPED"
+echo "  Total:   ${TOTAL}"
+echo "  Passed:  ${PASSED}"
+echo "  Failed:  ${FAILED}"
+echo "  Skipped: ${SKIPPED}"
 echo "==================================="
 
-if [ $FAILED -gt 0 ]; then
+if [[ "${FAILED}" -gt 0 ]]; then
 	echo ""
-	echo "VALIDATION FAILED - $FAILED patch(es) did not match"
+	echo "VALIDATION FAILED - ${FAILED} patch(es) did not match"
 	echo "Please update the patches to match the new file structure."
 	exit 1
 fi

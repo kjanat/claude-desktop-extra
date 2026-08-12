@@ -14,52 +14,54 @@ NEED_BUILD=1
 
 # --- Preflight checks ---
 
-if [ "$(id -u)" -ne 0 ]; then
-    echo "Error: run with sudo" >&2
-    exit 1
+CURRENT_UID="$(id -u)"
+if [[ "${CURRENT_UID}" -ne 0 ]]; then
+	echo "Error: run with sudo" >&2
+	exit 1
 fi
 
-REAL_USER="${SUDO_USER:-$USER}"
-RUNTIME_DIR="/run/user/$(id -u "$REAL_USER")"
+REAL_USER="${SUDO_USER:-${USER}}"
+RUNTIME_DIR="/run/user/$(id -u "${REAL_USER}")"
 
 # Check if v1.0+ is already installed
 if command -v ydotool &>/dev/null && ydotool --help 2>&1 | grep -q 'debug'; then
-    NEED_BUILD=0
-    echo "ydotool v1.0+ is already installed."
+	NEED_BUILD=0
+	echo "ydotool v1.0+ is already installed."
 fi
 
 # --- Build (only if needed) ---
 
-if [ "$NEED_BUILD" -eq 1 ]; then
-    echo "Installing ydotool $YDOTOOL_VERSION..."
+if [[ "${NEED_BUILD}" -eq 1 ]]; then
+	echo "Installing ydotool ${YDOTOOL_VERSION}..."
 
-    # Stop running daemon before replacing binaries
-    systemctl stop ydotoold 2>/dev/null || true
-    pkill -x ydotoold 2>/dev/null || true
+	# Stop running daemon before replacing binaries
+	systemctl stop ydotoold 2>/dev/null || true
+	pkill -x ydotoold 2>/dev/null || true
 
-    apt-get install -y cmake gcc g++ git 2>&1 | tail -1
-    rm -rf "$BUILD_DIR"
-    git clone -q https://github.com/ReimuNotMoe/ydotool.git "$BUILD_DIR"
-    cd "$BUILD_DIR"
-    git -c advice.detachedHead=false checkout -q "$YDOTOOL_VERSION"
-    mkdir build && cd build
-    cmake .. -DCMAKE_BUILD_TYPE=Release >/dev/null 2>&1
-    make -j"$(nproc)" >/dev/null 2>&1
-    cp ydotool ydotoold /usr/bin/
-    rm -rf "$BUILD_DIR"
+	apt-get install -y cmake gcc g++ git 2>&1 | tail -1
+	rm -rf "${BUILD_DIR}"
+	git clone -q https://github.com/ReimuNotMoe/ydotool.git "${BUILD_DIR}"
+	cd "${BUILD_DIR}"
+	git -c advice.detachedHead=false checkout -q "${YDOTOOL_VERSION}"
+	mkdir build && cd build
+	cmake .. -DCMAKE_BUILD_TYPE=Release >/dev/null 2>&1
+	BUILD_JOBS="$(nproc)"
+	make -j"${BUILD_JOBS}" >/dev/null 2>&1
+	cp ydotool ydotoold /usr/bin/
+	rm -rf "${BUILD_DIR}"
 fi
 
 # --- uinput permissions ---
 
 groupadd -f input
-usermod -aG input "$REAL_USER" 2>/dev/null || true
-echo 'KERNEL=="uinput", GROUP="input", MODE="0660"' > /etc/udev/rules.d/80-uinput.rules
+usermod -aG input "${REAL_USER}" 2>/dev/null || true
+echo 'KERNEL=="uinput", GROUP="input", MODE="0660"' >/etc/udev/rules.d/80-uinput.rules
 udevadm control --reload-rules
 udevadm trigger
 
 # --- systemd service ---
 
-cat > /etc/systemd/system/ydotoold.service << EOF
+cat >/etc/systemd/system/ydotoold.service <<EOF
 [Unit]
 Description=ydotool daemon (Wayland input automation)
 
@@ -76,19 +78,19 @@ systemctl enable --now ydotoold
 
 # --- GNOME: flat mouse acceleration ---
 
-DESKTOP=$(sudo -u "$REAL_USER" bash -c 'echo "${XDG_CURRENT_DESKTOP:-}"' 2>/dev/null || true)
-if echo "$DESKTOP" | grep -qi gnome; then
-    sudo -u "$REAL_USER" DBUS_SESSION_BUS_ADDRESS="unix:path=${RUNTIME_DIR}/bus" \
-        gsettings set org.gnome.desktop.peripherals.mouse accel-profile flat 2>/dev/null && \
-        echo "GNOME: set flat mouse acceleration for accurate cursor positioning." || true
+DESKTOP=$(sudo -u "${REAL_USER}" bash -c 'echo "${XDG_CURRENT_DESKTOP:-}"' 2>/dev/null || true)
+if echo "${DESKTOP}" | grep -qi gnome; then
+	sudo -u "${REAL_USER}" DBUS_SESSION_BUS_ADDRESS="unix:path=${RUNTIME_DIR}/bus" \
+		gsettings set org.gnome.desktop.peripherals.mouse accel-profile flat 2>/dev/null \
+		&& echo "GNOME: set flat mouse acceleration for accurate cursor positioning." || true
 fi
 
 # --- Verify ---
 
 sleep 1
 if pgrep -x ydotoold &>/dev/null; then
-    echo "Done! ydotoold is running. Restart Claude Desktop for Computer Use to pick it up."
+	echo "Done! ydotoold is running. Restart Claude Desktop for Computer Use to pick it up."
 else
-    echo "Warning: ydotoold failed to start. Check: systemctl status ydotoold" >&2
-    exit 1
+	echo "Warning: ydotoold failed to start. Check: systemctl status ydotoold" >&2
+	exit 1
 fi

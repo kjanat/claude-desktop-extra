@@ -66,12 +66,12 @@ APP_ID='claude'
 # run during early startup and call log(); bash resolves a called function's name
 # at call time, so a later definition would print "log: command not found" (#142).
 
-LOG_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/claude-desktop"
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/launcher.log"
+LOG_DIR="${XDG_CACHE_HOME:-${HOME}/.cache}/claude-desktop"
+mkdir -p "${LOG_DIR}"
+LOG_FILE="${LOG_DIR}/launcher.log"
 # Only written when we detach from a controlling terminal (see the tty-detach
 # block in the Launch section). Terminal launches keep the caller's stdio.
-STDIO_LOG="$LOG_DIR/stdout.log"
+STDIO_LOG="${LOG_DIR}/stdout.log"
 
 # Rotate the logs if they grow too large. log() only ever appends (one or
 # more lines per launch), so without a cap the file grows unboundedly over
@@ -81,16 +81,20 @@ STDIO_LOG="$LOG_DIR/stdout.log"
 # step is guarded: a missing file or an odd stat must not stop Claude from
 # opening. See issue #132 (the unbounded-growth half; the O(n^2) awk hang it
 # also describes belongs to a different project and does not exist here).
-_LOG_MAX_BYTES=$((2 * 1024 * 1024))  # 2 MiB
-for _lf in "$LOG_FILE" "$STDIO_LOG"; do
-    [[ -f $_lf ]] || continue
-    _log_size=$(stat -c %s "$_lf" 2>/dev/null || echo 0)
-    if [[ $_log_size =~ ^[0-9]+$ ]] && (( _log_size > _LOG_MAX_BYTES )); then
-        mv -f "$_lf" "$_lf.old" 2>/dev/null || true
-    fi
+_LOG_MAX_BYTES=$((2 * 1024 * 1024)) # 2 MiB
+for _lf in "${LOG_FILE}" "${STDIO_LOG}"; do
+	[[ -f ${_lf} ]] || continue
+	_log_size=$(stat -c %s "${_lf}" 2>/dev/null || echo 0)
+	if [[ ${_log_size} =~ ^[0-9]+$ ]] && ((_log_size > _LOG_MAX_BYTES)); then
+		mv -f "${_lf}" "${_lf}.old" 2>/dev/null || true
+	fi
 done
 
-log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG_FILE"; }
+log() {
+	local timestamp
+	timestamp=$(date '+%Y-%m-%d %H:%M:%S') || true
+	echo "${timestamp} $1" >>"${LOG_FILE}"
+}
 
 # ---------------------------------------------------------------------------
 # Profile resolution
@@ -109,8 +113,8 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG_FILE"; }
 # profile names match [a-zA-Z0-9_-]+.
 
 _invocation_basename="${0##*/}"
-if [[ -z "${CLAUDE_PROFILE:-}" && "$_invocation_basename" =~ ^claude-desktop-([a-zA-Z0-9_-]+)$ ]]; then
-    CLAUDE_PROFILE="${BASH_REMATCH[1]}"
+if [[ -z "${CLAUDE_PROFILE:-}" && "${_invocation_basename}" =~ ^claude-desktop-([a-zA-Z0-9_-]+)$ ]]; then
+	CLAUDE_PROFILE="${BASH_REMATCH[1]}"
 fi
 
 # Strip launcher-only flags from argv before subcommand dispatch and Electron
@@ -121,78 +125,78 @@ fi
 #   --1p / --3p:                     persist deploymentMode before launch
 _deployment_mode=""
 _filtered_args=()
-while (( $# > 0 )); do
-    case "$1" in
-        --profile=*)
-            CLAUDE_PROFILE="${1#--profile=}"
-            shift
-            ;;
-        --profile)
-            shift
-            if (( $# == 0 )); then
-                echo >&2 'claude-desktop: --profile requires an argument'
-                exit 2
-            fi
-            CLAUDE_PROFILE="$1"
-            shift
-            ;;
-        --no-systemd-scope)
-            CLAUDE_DISABLE_SYSTEMD_SCOPE=1
-            shift
-            ;;
-        --native-titlebar)
-            export CLAUDE_NATIVE_TITLEBAR=1
-            shift
-            ;;
-        --1p|--3p)
-            _deployment_mode="${1#--}"
-            shift
-            ;;
-        --boot-1p-once)
-            echo >&2 'claude-desktop: --boot-1p-once was removed upstream (official .deb builds no longer read it).'
-            echo >&2 'Use --1p or --3p instead: persists deploymentMode until switched back.'
-            exit 2
-            ;;
-        *)
-            _filtered_args+=("$1")
-            shift
-            ;;
-    esac
+while (($# > 0)); do
+	case "$1" in
+		--profile=*)
+			CLAUDE_PROFILE="${1#--profile=}"
+			shift
+			;;
+		--profile)
+			shift
+			if (($# == 0)); then
+				echo >&2 'claude-desktop: --profile requires an argument'
+				exit 2
+			fi
+			CLAUDE_PROFILE="$1"
+			shift
+			;;
+		--no-systemd-scope)
+			CLAUDE_DISABLE_SYSTEMD_SCOPE=1
+			shift
+			;;
+		--native-titlebar)
+			export CLAUDE_NATIVE_TITLEBAR=1
+			shift
+			;;
+		--1p | --3p)
+			_deployment_mode="${1#--}"
+			shift
+			;;
+		--boot-1p-once)
+			echo >&2 'claude-desktop: --boot-1p-once was removed upstream (official .deb builds no longer read it).'
+			echo >&2 'Use --1p or --3p instead: persists deploymentMode until switched back.'
+			exit 2
+			;;
+		*)
+			_filtered_args+=("$1")
+			shift
+			;;
+	esac
 done
-if (( ${#_filtered_args[@]} > 0 )); then
-    set -- "${_filtered_args[@]}"
+if ((${#_filtered_args[@]} > 0)); then
+	set -- "${_filtered_args[@]}"
 else
-    set --
+	set --
 fi
 
 if [[ "${CLAUDE_PROFILE:-}" == "default" ]]; then
-    unset CLAUDE_PROFILE
+	unset CLAUDE_PROFILE
 fi
 if [[ -n "${CLAUDE_PROFILE:-}" ]]; then
-    if ! [[ "$CLAUDE_PROFILE" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        echo >&2 "claude-desktop: invalid profile name '$CLAUDE_PROFILE' (allowed: [a-zA-Z0-9_-])"
-        exit 2
-    fi
-    profile_suffix="-${CLAUDE_PROFILE}"
-    export CLAUDE_PROFILE
-    # Relocate Claude Code's config dir so a profile's spawned `claude`
-    # processes don't share state with the user's other profiles. Honored by
-    # the @anthropic-ai/claude-code CLI (settings.json, projects/, sessions,
-    # plugins). Inherited by child_process.spawn unless the JS explicitly
-    # overrides env. Only set when a profile is active so default behavior
-    # is unchanged. See anthropics/claude-code#2986 for known caveats.
-    if [[ -z "${CLAUDE_CONFIG_DIR:-}" ]]; then
-        export CLAUDE_CONFIG_DIR="$HOME/.claude${profile_suffix}"
-    fi
+	if ! [[ "${CLAUDE_PROFILE}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+		echo >&2 "claude-desktop: invalid profile name '${CLAUDE_PROFILE}' (allowed: [a-zA-Z0-9_-])"
+		exit 2
+	fi
+	profile_suffix="-${CLAUDE_PROFILE}"
+	export CLAUDE_PROFILE
+	# Relocate Claude Code's config dir so a profile's spawned `claude`
+	# processes don't share state with the user's other profiles. Honored by
+	# the @anthropic-ai/claude-code CLI (settings.json, projects/, sessions,
+	# plugins). Inherited by child_process.spawn unless the JS explicitly
+	# overrides env. Only set when a profile is active so default behavior
+	# is unchanged. See anthropics/claude-code#2986 for known caveats.
+	if [[ -z "${CLAUDE_CONFIG_DIR:-}" ]]; then
+		export CLAUDE_CONFIG_DIR="${HOME}/.claude${profile_suffix}"
+	fi
 else
-    profile_suffix=""
+	profile_suffix=""
 fi
 
 # Per-profile Electron userData (also resolves SingletonLock to the per-profile
 # dir, so logins/logs/spaces.json/custom themes are auto-isolated). Must be
 # computed early because subcommands like --diagnose reference it before the
 # launch flow's SingletonLock cleanup block runs.
-config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/Claude${profile_suffix}"
+config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}/Claude${profile_suffix}"
 
 # .desktop filename identity (see the DESKTOP_ID note in the APP_ID header).
 # Default profile → "com.anthropic.Claude"; named → "com.anthropic.Claude-<name>".
@@ -218,43 +222,44 @@ DESKTOP_ID="com.anthropic.Claude${profile_suffix}"
 # semantics, limitations, and known failure modes.
 
 if [[ -z "${CLAUDE_PROFILE:-}" ]]; then
-    _claude_url=""
-    for _a in "$@"; do
-        case "$_a" in
-            claude://*|claude-desktop://*)
-                _claude_url="$_a"
-                break
-                ;;
-        esac
-    done
-    if [[ -n "$_claude_url" ]]; then
-        _runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-        # Most recently modified marker, max 5 min old, name validates as profile.
-        _marker=$(find "$_runtime_dir" -maxdepth 1 -type f \
-            -name 'claude-desktop-pending-auth-*' -mmin -5 \
-            -printf '%T@ %p\n' 2>/dev/null \
-            | sort -nr | head -1 | awk '{print $2}')
-        if [[ -n "$_marker" && -f "$_marker" ]]; then
-            _routed_profile="${_marker##*/claude-desktop-pending-auth-}"
-            if [[ "$_routed_profile" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-                rm -f "$_marker"
-                # The default profile uses the literal string "default" as
-                # its marker suffix so its callbacks beat any stale named-
-                # profile markers (otherwise an old work-profile marker
-                # would hijack the default profile's SSO login). Don't
-                # re-exec when the winning marker is the default profile —
-                # we're already on it (no --profile flag was passed).
-                if [[ "$_routed_profile" != "default" ]]; then
-                    # Re-exec under the routed profile. The exec replaces
-                    # this process so we don't need any further cleanup.
-                    # The receiving profile will see the URL via its
-                    # second-instance handler (or as initial argv if it
-                    # isn't running yet).
-                    exec "$0" "--profile=$_routed_profile" "$@"
-                fi
-            fi
-        fi
-    fi
+	_claude_url=""
+	for _a in "$@"; do
+		case "${_a}" in
+			claude://* | claude-desktop://*)
+				_claude_url="${_a}"
+				break
+				;;
+			*) ;;
+		esac
+	done
+	if [[ -n "${_claude_url}" ]]; then
+		_runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+		# Most recently modified marker, max 5 min old, name validates as profile.
+		_marker=$(find "${_runtime_dir}" -maxdepth 1 -type f \
+			-name 'claude-desktop-pending-auth-*' -mmin -5 \
+			-printf '%T@ %p\n' 2>/dev/null \
+			| sort -nr | head -1 | awk '{print $2}')
+		if [[ -n "${_marker}" && -f "${_marker}" ]]; then
+			_routed_profile="${_marker##*/claude-desktop-pending-auth-}"
+			if [[ "${_routed_profile}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+				rm -f "${_marker}"
+				# The default profile uses the literal string "default" as
+				# its marker suffix so its callbacks beat any stale named-
+				# profile markers (otherwise an old work-profile marker
+				# would hijack the default profile's SSO login). Don't
+				# re-exec when the winning marker is the default profile —
+				# we're already on it (no --profile flag was passed).
+				if [[ "${_routed_profile}" != "default" ]]; then
+					# Re-exec under the routed profile. The exec replaces
+					# this process so we don't need any further cleanup.
+					# The receiving profile will see the URL via its
+					# second-instance handler (or as initial argv if it
+					# isn't running yet).
+					exec "$0" "--profile=${_routed_profile}" "$@"
+				fi
+			fi
+		fi
+	fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -276,13 +281,13 @@ fi
 #  - Placed after the SSO profile-routing re-exec so a routed launch writes to
 #    the final profile's dir. Takes effect on the next full app start - if an
 #    instance is already running, quit it first.
-if [[ -n "$_deployment_mode" ]]; then
-    _mode_dir="${config_dir}-3p"
-    _mode_file="${_mode_dir}/claude_desktop_config.json"
-    mkdir -p "$_mode_dir"
-    if [[ -f "$_mode_file" ]]; then
-        if command -v python3 >/dev/null 2>&1; then
-            python3 - "$_mode_file" "$_deployment_mode" <<'PY'
+if [[ -n "${_deployment_mode}" ]]; then
+	_mode_dir="${config_dir}-3p"
+	_mode_file="${_mode_dir}/claude_desktop_config.json"
+	mkdir -p "${_mode_dir}"
+	if [[ -f "${_mode_file}" ]]; then
+		if command -v python3 >/dev/null 2>&1; then
+			python3 - "${_mode_file}" "${_deployment_mode}" <<'PY'
 import json, sys
 path, mode = sys.argv[1], sys.argv[2]
 try:
@@ -297,14 +302,14 @@ with open(path, "w") as f:
     json.dump(data, f, indent=2)
     f.write("\n")
 PY
-        else
-            echo >&2 "claude-desktop: --${_deployment_mode} needs python3 to edit ${_mode_file} - not found"
-            exit 2
-        fi
-    else
-        printf '{\n  "deploymentMode": "%s"\n}\n' "$_deployment_mode" > "$_mode_file"
-    fi
-    echo "[launcher] deploymentMode=${_deployment_mode} persisted to ${_mode_file}" >&2
+		else
+			echo >&2 "claude-desktop: --${_deployment_mode} needs python3 to edit ${_mode_file} - not found"
+			exit 2
+		fi
+	else
+		printf '{\n  "deploymentMode": "%s"\n}\n' "${_deployment_mode}" >"${_mode_file}"
+	fi
+	echo "[launcher] deploymentMode=${_deployment_mode} persisted to ${_mode_file}" >&2
 fi
 
 # ---------------------------------------------------------------------------
@@ -330,38 +335,38 @@ ELECTRON_BIN="${CLAUDE_ELECTRON:-}"
 # groups; in practice all profiles still report "com.anthropic.Claude" because
 # the shared app.asar desktopName wins - distinct per-profile WM_CLASS would need
 # a per-profile desktopName/CHROME_DESKTOP override, as in fix_quick_entry_app_id.nim.)
-if [[ -z "$ELECTRON_BIN" ]]; then
-    candidates=()
-    if [[ -n "$profile_suffix" ]]; then
-        candidates+=("$HOME/.local/lib/claude-desktop/${APP_ID}${profile_suffix}")
-    fi
-    candidates+=(
-        "/usr/lib/claude-desktop/${APP_ID}"
-        # Legacy path: Arch installs before the claude-desktop-extra rename.
-        "/usr/lib/claude-desktop-bin/${APP_ID}"
-    )
-    for candidate in "${candidates[@]}"; do
-        if [[ -x "$candidate" ]]; then
-            ELECTRON_BIN="$candidate"
-            break
-        fi
-    done
+if [[ -z "${ELECTRON_BIN}" ]]; then
+	candidates=()
+	if [[ -n "${profile_suffix}" ]]; then
+		candidates+=("${HOME}/.local/lib/claude-desktop/${APP_ID}${profile_suffix}")
+	fi
+	candidates+=(
+		"/usr/lib/claude-desktop/${APP_ID}"
+		# Legacy path: Arch installs before the claude-desktop-extra rename.
+		"/usr/lib/claude-desktop-bin/${APP_ID}"
+	)
+	for candidate in "${candidates[@]}"; do
+		if [[ -x "${candidate}" ]]; then
+			ELECTRON_BIN="${candidate}"
+			break
+		fi
+	done
 fi
 
-if [[ -z "$ELECTRON_BIN" || ! -x "$ELECTRON_BIN" ]]; then
-    echo >&2 'claude-desktop: Claude Desktop Electron binary not found.'
-    echo >&2 "Searched: /usr/lib/claude-desktop/${APP_ID}, /usr/lib/claude-desktop-bin/${APP_ID}"
-    echo >&2 'Set CLAUDE_ELECTRON=/path/to/claude to override.'
-    exit 1
+if [[ -z "${ELECTRON_BIN}" || ! -x "${ELECTRON_BIN}" ]]; then
+	echo >&2 'claude-desktop: Claude Desktop Electron binary not found.'
+	echo >&2 "Searched: /usr/lib/claude-desktop/${APP_ID}, /usr/lib/claude-desktop-bin/${APP_ID}"
+	echo >&2 'Set CLAUDE_ELECTRON=/path/to/claude to override.'
+	exit 1
 fi
 
 # Informational: the asar Electron will auto-load. The hard existence check
 # happens right before exec (after any per-profile refresh has run).
-APP_ASAR="$(dirname "$ELECTRON_BIN")/resources/app.asar"
+APP_ASAR="$(dirname "${ELECTRON_BIN}")/resources/app.asar"
 
-if [[ -n "${CLAUDE_APP_ASAR:-}" && "${CLAUDE_APP_ASAR}" != "$APP_ASAR" ]]; then
-    echo >&2 "claude-desktop: CLAUDE_APP_ASAR is deprecated and ignored - Electron auto-loads $APP_ASAR"
-    echo >&2 '  (to run a different app.asar, place it in a directory tree next to its own Electron binary and set CLAUDE_ELECTRON)'
+if [[ -n "${CLAUDE_APP_ASAR:-}" && "${CLAUDE_APP_ASAR}" != "${APP_ASAR}" ]]; then
+	echo >&2 "claude-desktop: CLAUDE_APP_ASAR is deprecated and ignored - Electron auto-loads ${APP_ASAR}"
+	echo >&2 '  (to run a different app.asar, place it in a directory tree next to its own Electron binary and set CLAUDE_ELECTRON)'
 fi
 
 # ---------------------------------------------------------------------------
@@ -384,26 +389,26 @@ GNOME_HOTKEY_DEFAULT='<Primary><Alt>space'
 # Check that the session looks like GNOME (or at least has gnome-settings-daemon
 # handling custom keybindings). Returns 0 if ok, 1 with a stderr message if not.
 _require_gnome_gsettings() {
-    if ! command -v gsettings &>/dev/null; then
-        echo >&2 'claude-desktop: gsettings not found. This command requires GNOME / gnome-settings-daemon.'
-        return 1
-    fi
-    if ! gsettings list-keys "$GNOME_HOTKEY_ROOT" 2>/dev/null | grep -q '^custom-keybindings$'; then
-        echo >&2 "claude-desktop: schema '$GNOME_HOTKEY_ROOT' not available. This command requires GNOME."
-        return 1
-    fi
+	if ! command -v gsettings &>/dev/null; then
+		echo >&2 'claude-desktop: gsettings not found. This command requires GNOME / gnome-settings-daemon.'
+		return 1
+	fi
+	if ! gsettings list-keys "${GNOME_HOTKEY_ROOT}" 2>/dev/null | grep -q '^custom-keybindings$'; then
+		echo >&2 "claude-desktop: schema '${GNOME_HOTKEY_ROOT}' not available. This command requires GNOME."
+		return 1
+	fi
 }
 
 _install_gnome_hotkey() {
-    local accel="${1:-$GNOME_HOTKEY_DEFAULT}"
-    _require_gnome_gsettings || return 1
+	local accel="${1:-${GNOME_HOTKEY_DEFAULT}}"
+	_require_gnome_gsettings
 
-    # Python helper: safely parse the Python-list string from `gsettings get`
-    # and append our slot if absent. Prints the new value as a Python list.
-    local new_array
-    if ! new_array=$(
-        gsettings get "$GNOME_HOTKEY_ROOT" custom-keybindings \
-        | python3 -c "
+	# Python helper: safely parse the Python-list string from `gsettings get`
+	# and append our slot if absent. Prints the new value as a Python list.
+	local new_array
+	if ! new_array=$(
+		gsettings get "${GNOME_HOTKEY_ROOT}" custom-keybindings \
+			| python3 -c "
 import ast, sys
 raw = sys.stdin.read().strip()
 # gsettings prints '@as []' for empty, otherwise a Python-list literal
@@ -414,36 +419,36 @@ try:
 except (ValueError, SyntaxError):
     print('PARSE_ERROR', file=sys.stderr)
     sys.exit(2)
-slot = '$GNOME_HOTKEY_SLOT'
+slot = '${GNOME_HOTKEY_SLOT}'
 if slot not in arr:
     arr.append(slot)
 print(repr(arr))
 "
-    ); then
-        echo >&2 'claude-desktop: failed to parse existing custom-keybindings array'
-        return 1
-    fi
+	); then
+		echo >&2 'claude-desktop: failed to parse existing custom-keybindings array'
+		return 1
+	fi
 
-    gsettings set "$GNOME_HOTKEY_ROOT" custom-keybindings "$new_array"
-    # Per-slot schema writes. Use ':' form to scope the schema to our slot.
-    gsettings set "${GNOME_HOTKEY_ROOT}.custom-keybinding:${GNOME_HOTKEY_SLOT}" name 'Claude Desktop Quick Entry'
-    gsettings set "${GNOME_HOTKEY_ROOT}.custom-keybinding:${GNOME_HOTKEY_SLOT}" command 'claude-desktop --toggle'
-    gsettings set "${GNOME_HOTKEY_ROOT}.custom-keybinding:${GNOME_HOTKEY_SLOT}" binding "$accel"
+	gsettings set "${GNOME_HOTKEY_ROOT}" custom-keybindings "${new_array}"
+	# Per-slot schema writes. Use ':' form to scope the schema to our slot.
+	gsettings set "${GNOME_HOTKEY_ROOT}.custom-keybinding:${GNOME_HOTKEY_SLOT}" name 'Claude Desktop Quick Entry'
+	gsettings set "${GNOME_HOTKEY_ROOT}.custom-keybinding:${GNOME_HOTKEY_SLOT}" command 'claude-desktop --toggle'
+	gsettings set "${GNOME_HOTKEY_ROOT}.custom-keybinding:${GNOME_HOTKEY_SLOT}" binding "${accel}"
 
-    echo "Installed GNOME hotkey: $accel → claude-desktop --toggle"
-    echo "Test it by pressing $accel from any window (Claude does not need to be focused)."
-    echo "To change the accelerator later: claude-desktop --install-gnome-hotkey '<Super>space'"
-    echo "To remove: claude-desktop --uninstall-gnome-hotkey"
-    return 0
+	echo "Installed GNOME hotkey: ${accel} → claude-desktop --toggle"
+	echo "Test it by pressing ${accel} from any window (Claude does not need to be focused)."
+	echo "To change the accelerator later: claude-desktop --install-gnome-hotkey '<Super>space'"
+	echo "To remove: claude-desktop --uninstall-gnome-hotkey"
+	return 0
 }
 
 _uninstall_gnome_hotkey() {
-    _require_gnome_gsettings || return 1
+	_require_gnome_gsettings
 
-    local new_array
-    if ! new_array=$(
-        gsettings get "$GNOME_HOTKEY_ROOT" custom-keybindings \
-        | python3 -c "
+	local new_array
+	if ! new_array=$(
+		gsettings get "${GNOME_HOTKEY_ROOT}" custom-keybindings \
+			| python3 -c "
 import ast, sys
 raw = sys.stdin.read().strip()
 if raw.startswith('@as '):
@@ -453,57 +458,60 @@ try:
 except (ValueError, SyntaxError):
     print('PARSE_ERROR', file=sys.stderr)
     sys.exit(2)
-slot = '$GNOME_HOTKEY_SLOT'
+slot = '${GNOME_HOTKEY_SLOT}'
 arr = [x for x in arr if x != slot]
 print(repr(arr))
 "
-    ); then
-        echo >&2 'claude-desktop: failed to parse existing custom-keybindings array'
-        return 1
-    fi
+	); then
+		echo >&2 'claude-desktop: failed to parse existing custom-keybindings array'
+		return 1
+	fi
 
-    gsettings set "$GNOME_HOTKEY_ROOT" custom-keybindings "$new_array"
-    # Reset per-slot schema to drop our name/command/binding.
-    gsettings reset-recursively "${GNOME_HOTKEY_ROOT}.custom-keybinding:${GNOME_HOTKEY_SLOT}" 2>/dev/null || true
+	gsettings set "${GNOME_HOTKEY_ROOT}" custom-keybindings "${new_array}"
+	# Reset per-slot schema to drop our name/command/binding.
+	gsettings reset-recursively "${GNOME_HOTKEY_ROOT}.custom-keybinding:${GNOME_HOTKEY_SLOT}" 2>/dev/null || true
 
-    echo "Removed GNOME hotkey slot: $GNOME_HOTKEY_SLOT"
-    return 0
+	echo "Removed GNOME hotkey slot: ${GNOME_HOTKEY_SLOT}"
+	return 0
 }
 
 _profile_paths() {
-    # Outputs the four files associated with a profile to stdout, one per line.
-    # Order: electron-symlink, launcher-symlink, desktop-file, config-dir.
-    # The .desktop filename is the app IDENTITY (com.anthropic.Claude-<name>),
-    # NOT the launcher-binary/symlink name (claude-desktop-<name>) - those are
-    # deliberately different axes (see the APP_ID / DESKTOP_ID header).
-    local name="$1"
-    echo "$HOME/.local/lib/claude-desktop/${APP_ID}-${name}"
-    echo "$HOME/.local/bin/claude-desktop-${name}"
-    echo "$HOME/.local/share/applications/com.anthropic.Claude-${name}.desktop"
-    echo "${XDG_CONFIG_HOME:-$HOME/.config}/Claude-${name}"
+	# Outputs the four files associated with a profile to stdout, one per line.
+	# Order: electron-symlink, launcher-symlink, desktop-file, config-dir.
+	# The .desktop filename is the app IDENTITY (com.anthropic.Claude-<name>),
+	# NOT the launcher-binary/symlink name (claude-desktop-<name>) - those are
+	# deliberately different axes (see the APP_ID / DESKTOP_ID header).
+	local name="$1"
+	echo "${HOME}/.local/lib/claude-desktop/${APP_ID}-${name}"
+	echo "${HOME}/.local/bin/claude-desktop-${name}"
+	echo "${HOME}/.local/share/applications/com.anthropic.Claude-${name}.desktop"
+	echo "${XDG_CONFIG_HOME:-${HOME}/.config}/Claude-${name}"
 }
 
 # Try to materialise a per-profile Electron binary at $2, taking the cheapest
 # option that produces a real (not-symlink) inode at the destination so that
 # /proc/self/exe resolves to the per-profile path. Sets the global _link_kind
-# to a human-readable label. Returns 0 on success, 1 on failure.
+# to a human-readable label and _materialise_succeeded to 1 on success.
 _materialise_profile_binary() {
-    local src="$1" dst="$2"
-    _link_kind=""
-    if ln "$src" "$dst" 2>/dev/null; then
-        _link_kind="hardlink (~0 disk used)"
-        return 0
-    fi
-    if cp --reflink=always "$src" "$dst" 2>/dev/null; then
-        _link_kind="reflink (CoW, ~0 disk used)"
-        return 0
-    fi
-    if cp "$src" "$dst" 2>/dev/null; then
-        _link_kind="copy ($(du -h "$dst" | cut -f1))"
-        return 0
-    fi
-    rm -f "$dst"
-    return 1
+	local src="$1" dst="$2"
+	_link_kind=""
+	_materialise_succeeded=0
+	if ln "${src}" "${dst}" 2>/dev/null; then
+		_link_kind="hardlink (~0 disk used)"
+		_materialise_succeeded=1
+		return
+	fi
+	if cp --reflink=always "${src}" "${dst}" 2>/dev/null; then
+		_link_kind="reflink (CoW, ~0 disk used)"
+		_materialise_succeeded=1
+		return
+	fi
+	if cp "${src}" "${dst}" 2>/dev/null; then
+		_link_kind="copy ($(du -h "${dst}" | cut -f1))"
+		_materialise_succeeded=1
+		return
+	fi
+	rm -f "${dst}" || true
 }
 
 # Refresh the per-profile directory's sibling symlinks. Electron's
@@ -514,19 +522,22 @@ _materialise_profile_binary() {
 # point at the wrong target, and skips the per-profile binary itself plus
 # any other profile binaries that already live there.
 _mirror_profile_siblings() {
-    local src_dir="$1" dst_dir="$2" orig_bn="$3"
-    local entry bn target
-    for entry in "$src_dir"/*; do
-        [[ -e "$entry" ]] || continue
-        bn="$(basename "$entry")"
-        [[ "$bn" == "$orig_bn" ]] && continue
-        case "$bn" in "${APP_ID}-"*) continue ;; esac
-        target="$(readlink "$dst_dir/$bn" 2>/dev/null || true)"
-        if [[ "$target" != "$entry" ]]; then
-            rm -f "$dst_dir/$bn"
-            ln -s "$entry" "$dst_dir/$bn"
-        fi
-    done
+	local src_dir="$1" dst_dir="$2" orig_bn="$3"
+	local entry bn target
+	for entry in "${src_dir}"/*; do
+		[[ -e "${entry}" ]] || continue
+		bn="$(basename "${entry}")"
+		[[ "${bn}" == "${orig_bn}" ]] && continue
+		case "${bn}" in
+			"${APP_ID}-"*) continue ;;
+			*) ;;
+		esac
+		target="$(readlink "${dst_dir}/${bn}" 2>/dev/null || true)"
+		if [[ "${target}" != "${entry}" ]]; then
+			rm -f "${dst_dir}/${bn}"
+			ln -s "${entry}" "${dst_dir}/${bn}"
+		fi
+	done
 }
 
 # Resolve the canonical (system-installed) Electron binary, ignoring any
@@ -535,17 +546,17 @@ _mirror_profile_siblings() {
 # (The claude-desktop-bin path is legacy: Arch installs before the
 # claude-desktop-extra rename.)
 _canonical_electron_bin() {
-    local c
-    for c in \
-        "/usr/lib/claude-desktop/${APP_ID}" \
-        "/usr/lib/claude-desktop-bin/${APP_ID}" \
-        "/usr/lib/claude-desktop/electron"; do
-        if [[ -x "$c" ]]; then
-            echo "$c"
-            return 0
-        fi
-    done
-    return 1
+	local c
+	for c in \
+		"/usr/lib/claude-desktop/${APP_ID}" \
+		"/usr/lib/claude-desktop-bin/${APP_ID}" \
+		"/usr/lib/claude-desktop/electron"; do
+		if [[ -x "${c}" ]]; then
+			echo "${c}"
+			return 0
+		fi
+	done
+	return 0
 }
 
 # At every launch under a named profile, repair the per-profile install if it
@@ -561,104 +572,109 @@ _canonical_electron_bin() {
 # correlate post-upgrade hiccups. Failures fall through to whatever the
 # next launch attempt sees; no fatal exit.
 _refresh_profile_binary_if_stale() {
-    [[ -z "$profile_suffix" ]] && return 0
-    local profile_bin="$HOME/.local/lib/claude-desktop/${APP_ID}${profile_suffix}"
-    [[ -e "$profile_bin" ]] || return 0  # not yet --create-profile'd
-    local canonical
-    canonical="$(_canonical_electron_bin)" || return 0  # no system install? bail
+	[[ -z "${profile_suffix}" ]] && return 0
+	local profile_bin="${HOME}/.local/lib/claude-desktop/${APP_ID}${profile_suffix}"
+	[[ -e "${profile_bin}" ]] || return 0 # not yet --create-profile'd
+	local canonical
+	canonical="$(_canonical_electron_bin)"
+	[[ -n "${canonical}" ]] || return 0 # no system install? bail
 
-    local need_refresh=0 reason=""
-    if [[ ! -x "$profile_bin" ]]; then
-        need_refresh=1; reason="per-profile binary not executable (Nix store moved?)"
-    elif [[ "$canonical" -nt "$profile_bin" ]]; then
-        need_refresh=1; reason="canonical Electron is newer (package upgrade?)"
-    else
-        # Walk siblings; if any symlink dangles, full refresh.
-        local entry bn target
-        for entry in "$(dirname "$profile_bin")"/*; do
-            [[ -L "$entry" ]] || continue
-            target="$(readlink "$entry" 2>/dev/null)"
-            if [[ -z "$target" || ! -e "$target" ]]; then
-                need_refresh=1; reason="sibling symlink dangling: $entry"
-                break
-            fi
-        done
-    fi
+	local need_refresh=0 reason=""
+	if [[ ! -x "${profile_bin}" ]]; then
+		need_refresh=1
+		reason="per-profile binary not executable (Nix store moved?)"
+	elif [[ "${canonical}" -nt "${profile_bin}" ]]; then
+		need_refresh=1
+		reason="canonical Electron is newer (package upgrade?)"
+	else
+		# Walk siblings; if any symlink dangles, full refresh.
+		local entry bn target
+		for entry in "$(dirname "${profile_bin}")"/*; do
+			[[ -L "${entry}" ]] || continue
+			target="$(readlink "${entry}" 2>/dev/null)"
+			if [[ -z "${target}" || ! -e "${target}" ]]; then
+				need_refresh=1
+				reason="sibling symlink dangling: ${entry}"
+				break
+			fi
+		done
+	fi
 
-    (( need_refresh )) || return 0
-    log "Refreshing stale profile '$CLAUDE_PROFILE': $reason"
-    echo >&2 "claude-desktop: refreshing stale per-profile binary ($reason)"
+	((need_refresh)) || return 0
+	log "Refreshing stale profile '${CLAUDE_PROFILE}': ${reason}"
+	echo >&2 "claude-desktop: refreshing stale per-profile binary (${reason})"
 
-    rm -f "$profile_bin"
-    if ! _materialise_profile_binary "$canonical" "$profile_bin"; then
-        echo >&2 "claude-desktop: failed to refresh per-profile binary; falling back to canonical for this launch"
-        return 1
-    fi
-    _mirror_profile_siblings "$(dirname "$canonical")" "$(dirname "$profile_bin")" "$(basename "$canonical")"
-    log "Refreshed via $_link_kind"
-    return 0
+	rm -f "${profile_bin}"
+	_materialise_profile_binary "${canonical}" "${profile_bin}"
+	if ((!_materialise_succeeded)); then
+		echo >&2 "claude-desktop: failed to refresh per-profile binary; falling back to canonical for this launch"
+		return 1
+	fi
+	_mirror_profile_siblings "$(dirname "${canonical}")" "$(dirname "${profile_bin}")" "$(basename "${canonical}")"
+	log "Refreshed via ${_link_kind}"
+	return 0
 }
 
 # ---------------------------------------------------------------------------
 # AppImage desktop integration (protocol handler + app menu entry)
 # ---------------------------------------------------------------------------
-_APPIMAGE_DESKTOP_FILE="$HOME/.local/share/applications/${DESKTOP_ID}.desktop"
-_APPIMAGE_ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
+_APPIMAGE_DESKTOP_FILE="${HOME}/.local/share/applications/${DESKTOP_ID}.desktop"
+_APPIMAGE_ICON_DIR="${HOME}/.local/share/icons/hicolor/256x256/apps"
 
 _appimage_integrate() {
-    local appimage_path="${CLAUDE_APPIMAGE_PATH:-}"
-    local quiet="${1:-}"
+	local appimage_path="${CLAUDE_APPIMAGE_PATH:-}"
+	local quiet="${1:-}"
 
-    if [[ -z "$appimage_path" ]]; then
-        if [[ "$quiet" != "quiet" ]]; then
-            echo >&2 "claude-desktop: not running as AppImage (CLAUDE_APPIMAGE_PATH unset)."
-            echo >&2 "  This command is only needed for AppImage installs."
-        fi
-        return 1
-    fi
+	if [[ -z "${appimage_path}" ]]; then
+		if [[ "${quiet}" != "quiet" ]]; then
+			echo >&2 "claude-desktop: not running as AppImage (CLAUDE_APPIMAGE_PATH unset)."
+			echo >&2 "  This command is only needed for AppImage installs."
+		fi
+		return 1
+	fi
 
-    if [[ ! -f "$appimage_path" ]]; then
-        log "AppImage integrate: path does not exist: $appimage_path"
-        if [[ "$quiet" != "quiet" ]]; then
-            echo >&2 "claude-desktop: AppImage not found at $appimage_path"
-        fi
-        return 1
-    fi
+	if [[ ! -f "${appimage_path}" ]]; then
+		log "AppImage integrate: path does not exist: ${appimage_path}"
+		if [[ "${quiet}" != "quiet" ]]; then
+			echo >&2 "claude-desktop: AppImage not found at ${appimage_path}"
+		fi
+		return 1
+	fi
 
-    if [[ -f "/usr/share/applications/${DESKTOP_ID}.desktop" ]]; then
-        log "AppImage integrate: system .desktop exists - skipping"
-        if [[ "$quiet" != "quiet" ]]; then
-            echo "System package already provides ${DESKTOP_ID}.desktop - AppImage integration skipped."
-            echo "(The system package's protocol handler takes priority.)"
-        fi
-        return 0
-    fi
+	if [[ -f "/usr/share/applications/${DESKTOP_ID}.desktop" ]]; then
+		log "AppImage integrate: system .desktop exists - skipping"
+		if [[ "${quiet}" != "quiet" ]]; then
+			echo "System package already provides ${DESKTOP_ID}.desktop - AppImage integration skipped."
+			echo "(The system package's protocol handler takes priority.)"
+		fi
+		return 0
+	fi
 
-    local desired_exec="Exec=${appimage_path} %u"
+	local desired_exec="Exec=${appimage_path} %u"
 
-    if [[ -f "$_APPIMAGE_DESKTOP_FILE" ]]; then
-        local current_exec
-        current_exec=$(grep '^Exec=' "$_APPIMAGE_DESKTOP_FILE" 2>/dev/null | head -1)
-        if [[ "$current_exec" == "$desired_exec" ]]; then
-            log "AppImage integrate: .desktop up to date ($appimage_path)"
-            if [[ "$quiet" != "quiet" ]]; then
-                echo "Desktop integration already up to date."
-                echo "  File: $_APPIMAGE_DESKTOP_FILE"
-                echo "  Exec: $appimage_path %u"
-            fi
-            return 0
-        fi
-        log "AppImage integrate: updating .desktop (path changed)"
-    fi
+	if [[ -f "${_APPIMAGE_DESKTOP_FILE}" ]]; then
+		local current_exec
+		current_exec=$(grep '^Exec=' "${_APPIMAGE_DESKTOP_FILE}" 2>/dev/null | head -1)
+		if [[ "${current_exec}" == "${desired_exec}" ]]; then
+			log "AppImage integrate: .desktop up to date (${appimage_path})"
+			if [[ "${quiet}" != "quiet" ]]; then
+				echo "Desktop integration already up to date."
+				echo "  File: ${_APPIMAGE_DESKTOP_FILE}"
+				echo "  Exec: ${appimage_path} %u"
+			fi
+			return 0
+		fi
+		log "AppImage integrate: updating .desktop (path changed)"
+	fi
 
-    mkdir -p "$(dirname "$_APPIMAGE_DESKTOP_FILE")"
+	mkdir -p "$(dirname "${_APPIMAGE_DESKTOP_FILE}")"
 
-    # Content aligned to the official .deb's .desktop (issue #148), adapted for
-    # AppImage: Exec= and the Action Exec lines point at the AppImage path
-    # instead of /usr/bin/claude-desktop. We keep %u (not the official %U) on the
-    # main Exec= so it matches $desired_exec in the up-to-date check above;
-    # the launcher handles a single claude:// URL either way.
-    cat > "$_APPIMAGE_DESKTOP_FILE" <<DESKTOP_EOF
+	# Content aligned to the official .deb's .desktop (issue #148), adapted for
+	# AppImage: Exec= and the Action Exec lines point at the AppImage path
+	# instead of /usr/bin/claude-desktop. We keep %u (not the official %U) on the
+	# main Exec= so it matches $desired_exec in the up-to-date check above;
+	# the launcher handles a single claude:// URL either way.
+	cat >"${_APPIMAGE_DESKTOP_FILE}" <<DESKTOP_EOF
 [Desktop Entry]
 Name=Claude
 Comment=Desktop application for Claude.ai
@@ -683,180 +699,181 @@ Name=New Claude Code session
 Exec=${appimage_path} claude://code/new
 DESKTOP_EOF
 
-    local appimage_icon=""
-    local here="${CLAUDE_ELECTRON%/*}"
-    if [[ -n "$here" ]]; then
-        local appdir="${here}/../../.."
-        if [[ -f "$appdir/claude-desktop.png" ]]; then
-            appimage_icon="$appdir/claude-desktop.png"
-        elif [[ -f "$appdir/usr/share/icons/hicolor/256x256/apps/claude-desktop.png" ]]; then
-            appimage_icon="$appdir/usr/share/icons/hicolor/256x256/apps/claude-desktop.png"
-        fi
-    fi
-    if [[ -n "$appimage_icon" && -f "$appimage_icon" ]]; then
-        mkdir -p "$_APPIMAGE_ICON_DIR"
-        cp "$appimage_icon" "$_APPIMAGE_ICON_DIR/claude-desktop.png" 2>/dev/null || true
-    fi
+	local appimage_icon=""
+	local here="${CLAUDE_ELECTRON%/*}"
+	if [[ -n "${here}" ]]; then
+		local appdir="${here}/../../.."
+		if [[ -f "${appdir}/claude-desktop.png" ]]; then
+			appimage_icon="${appdir}/claude-desktop.png"
+		elif [[ -f "${appdir}/usr/share/icons/hicolor/256x256/apps/claude-desktop.png" ]]; then
+			appimage_icon="${appdir}/usr/share/icons/hicolor/256x256/apps/claude-desktop.png"
+		fi
+	fi
+	if [[ -n "${appimage_icon}" && -f "${appimage_icon}" ]]; then
+		mkdir -p "${_APPIMAGE_ICON_DIR}"
+		cp "${appimage_icon}" "${_APPIMAGE_ICON_DIR}/claude-desktop.png" 2>/dev/null || true
+	fi
 
-    if command -v update-desktop-database &>/dev/null; then
-        update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
-    fi
+	if command -v update-desktop-database &>/dev/null; then
+		update-desktop-database "${HOME}/.local/share/applications" 2>/dev/null || true
+	fi
 
-    if command -v xdg-mime &>/dev/null; then
-        xdg-mime default "${DESKTOP_ID}.desktop" x-scheme-handler/claude 2>/dev/null || true
-    fi
+	if command -v xdg-mime &>/dev/null; then
+		xdg-mime default "${DESKTOP_ID}.desktop" x-scheme-handler/claude 2>/dev/null || true
+	fi
 
-    log "AppImage integrate: registered ${_APPIMAGE_DESKTOP_FILE} -> ${appimage_path}"
-    if [[ "$quiet" != "quiet" ]]; then
-        echo "Desktop integration installed."
-        echo "  File: $_APPIMAGE_DESKTOP_FILE"
-        echo "  Exec: $appimage_path %u"
-        echo "  Protocol: claude:// -> Claude Desktop (AppImage)"
-        echo
-        echo "The claude:// protocol handler is now active."
-        echo "To remove: claude-desktop --unintegrate"
-    fi
-    return 0
+	log "AppImage integrate: registered ${_APPIMAGE_DESKTOP_FILE} -> ${appimage_path}"
+	if [[ "${quiet}" != "quiet" ]]; then
+		echo "Desktop integration installed."
+		echo "  File: ${_APPIMAGE_DESKTOP_FILE}"
+		echo "  Exec: ${appimage_path} %u"
+		echo "  Protocol: claude:// -> Claude Desktop (AppImage)"
+		echo
+		echo "The claude:// protocol handler is now active."
+		echo "To remove: claude-desktop --unintegrate"
+	fi
+	return 0
 }
 
 _appimage_unintegrate() {
-    local removed=0
+	local removed=0
 
-    if [[ -f "$_APPIMAGE_DESKTOP_FILE" ]]; then
-        local exec_line
-        exec_line=$(grep '^Exec=' "$_APPIMAGE_DESKTOP_FILE" 2>/dev/null | head -1)
-        if [[ "$exec_line" == *".AppImage"* ]]; then
-            rm -f "$_APPIMAGE_DESKTOP_FILE"
-            echo "Removed: $_APPIMAGE_DESKTOP_FILE"
-            removed=$((removed + 1))
-        else
-            echo >&2 "claude-desktop: $_APPIMAGE_DESKTOP_FILE does not point to an AppImage - not removing."
-            echo >&2 "  Current Exec=: $exec_line"
-            return 1
-        fi
-    fi
+	if [[ -f "${_APPIMAGE_DESKTOP_FILE}" ]]; then
+		local exec_line
+		exec_line=$(grep '^Exec=' "${_APPIMAGE_DESKTOP_FILE}" 2>/dev/null | head -1)
+		if [[ "${exec_line}" == *".AppImage"* ]]; then
+			rm -f "${_APPIMAGE_DESKTOP_FILE}"
+			echo "Removed: ${_APPIMAGE_DESKTOP_FILE}"
+			removed=$((removed + 1))
+		else
+			echo >&2 "claude-desktop: ${_APPIMAGE_DESKTOP_FILE} does not point to an AppImage - not removing."
+			echo >&2 "  Current Exec=: ${exec_line}"
+			return 1
+		fi
+	fi
 
-    local icon_file="$_APPIMAGE_ICON_DIR/claude-desktop.png"
-    if [[ -f "$icon_file" ]]; then
-        rm -f "$icon_file"
-        echo "Removed: $icon_file"
-        removed=$((removed + 1))
-    fi
+	local icon_file="${_APPIMAGE_ICON_DIR}/claude-desktop.png"
+	if [[ -f "${icon_file}" ]]; then
+		rm -f "${icon_file}"
+		echo "Removed: ${icon_file}"
+		removed=$((removed + 1))
+	fi
 
-    if (( removed == 0 )); then
-        echo "No AppImage integration found to remove."
-        return 0
-    fi
+	if ((removed == 0)); then
+		echo "No AppImage integration found to remove."
+		return 0
+	fi
 
-    if command -v update-desktop-database &>/dev/null; then
-        update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
-    fi
+	if command -v update-desktop-database &>/dev/null; then
+		update-desktop-database "${HOME}/.local/share/applications" 2>/dev/null || true
+	fi
 
-    echo "Desktop integration removed."
-    return 0
+	echo "Desktop integration removed."
+	return 0
 }
 
 _create_profile() {
-    local name="$1"
-    if [[ -z "$name" || "$name" == "default" ]]; then
-        echo >&2 "claude-desktop: profile name must be non-empty and not 'default'"
-        return 2
-    fi
-    if ! [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        echo >&2 "claude-desktop: invalid profile name '$name' (allowed: [a-zA-Z0-9_-])"
-        return 2
-    fi
+	local name="$1"
+	if [[ -z "${name}" || "${name}" == "default" ]]; then
+		echo >&2 "claude-desktop: profile name must be non-empty and not 'default'"
+		return 2
+	fi
+	if ! [[ "${name}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+		echo >&2 "claude-desktop: invalid profile name '${name}' (allowed: [a-zA-Z0-9_-])"
+		return 2
+	fi
 
-    local launcher_path
-    launcher_path="$(readlink -f "$0" 2>/dev/null || echo "$0")"
-    if [[ ! -x "$launcher_path" ]]; then
-        echo >&2 "claude-desktop: cannot resolve launcher path ($0)"
-        return 1
-    fi
-    if [[ "$ELECTRON_BIN" == "electron" || ! -x "$ELECTRON_BIN" ]]; then
-        echo >&2 "claude-desktop: cannot resolve bundled Electron binary; --create-profile requires an installed package"
-        return 1
-    fi
+	local launcher_path
+	launcher_path="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+	if [[ ! -x "${launcher_path}" ]]; then
+		echo >&2 "claude-desktop: cannot resolve launcher path ($0)"
+		return 1
+	fi
+	if [[ "${ELECTRON_BIN}" == "electron" || ! -x "${ELECTRON_BIN}" ]]; then
+		echo >&2 "claude-desktop: cannot resolve bundled Electron binary; --create-profile requires an installed package"
+		return 1
+	fi
 
-    local electron_bin_path="$HOME/.local/lib/claude-desktop/${APP_ID}-${name}"
-    local launcher_link="$HOME/.local/bin/claude-desktop-${name}"
-    local desktop_file="$HOME/.local/share/applications/com.anthropic.Claude-${name}.desktop"
+	local electron_bin_path="${HOME}/.local/lib/claude-desktop/${APP_ID}-${name}"
+	local launcher_link="${HOME}/.local/bin/claude-desktop-${name}"
+	local desktop_file="${HOME}/.local/share/applications/com.anthropic.Claude-${name}.desktop"
 
-    if [[ -e "$electron_bin_path" || -e "$launcher_link" || -e "$desktop_file" ]]; then
-        echo >&2 "claude-desktop: profile '$name' already exists. Use --delete-profile=$name first to recreate."
-        return 1
-    fi
+	if [[ -e "${electron_bin_path}" || -e "${launcher_link}" || -e "${desktop_file}" ]]; then
+		echo >&2 "claude-desktop: profile '${name}' already exists. Use --delete-profile=${name} first to recreate."
+		return 1
+	fi
 
-    mkdir -p "$(dirname "$electron_bin_path")" "$(dirname "$launcher_link")" "$(dirname "$desktop_file")"
+	mkdir -p "$(dirname "${electron_bin_path}")" "$(dirname "${launcher_link}")" "$(dirname "${desktop_file}")"
 
-    # The per-profile Electron binary is a real file (not a symlink) so
-    # /proc/self/exe resolves to the per-profile path (distinct argv[0] / scope).
-    # This mirrors how Chrome does multi-channel (google-chrome-stable /
-    # google-chrome-beta are real copies). NOTE: this alone does NOT give each
-    # profile a distinct WM_CLASS - Chromium's app_id comes from the shared
-    # app.asar desktopName ("com.anthropic.Claude"), not the binary basename, so the
-    # WM still groups all profiles as one app. See issue #148 / the discovery
-    # comment above for the per-profile-desktopName follow-up.
-    #
-    # Strategy: hardlink first (zero-cost, same fs only), reflink second
-    # (zero-cost on btrfs/xfs), copy fallback (typically ~200 MB per profile).
-    if ! _materialise_profile_binary "$ELECTRON_BIN" "$electron_bin_path"; then
-        echo >&2 "claude-desktop: failed to materialise per-profile binary at $electron_bin_path"
-        return 1
-    fi
-    local link_kind="$_link_kind"
+	# The per-profile Electron binary is a real file (not a symlink) so
+	# /proc/self/exe resolves to the per-profile path (distinct argv[0] / scope).
+	# This mirrors how Chrome does multi-channel (google-chrome-stable /
+	# google-chrome-beta are real copies). NOTE: this alone does NOT give each
+	# profile a distinct WM_CLASS - Chromium's app_id comes from the shared
+	# app.asar desktopName ("com.anthropic.Claude"), not the binary basename, so the
+	# WM still groups all profiles as one app. See issue #148 / the discovery
+	# comment above for the per-profile-desktopName follow-up.
+	#
+	# Strategy: hardlink first (zero-cost, same fs only), reflink second
+	# (zero-cost on btrfs/xfs), copy fallback (typically ~200 MB per profile).
+	_materialise_profile_binary "${ELECTRON_BIN}" "${electron_bin_path}"
+	if ((!_materialise_succeeded)); then
+		echo >&2 "claude-desktop: failed to materialise per-profile binary at ${electron_bin_path}"
+		return 1
+	fi
+	local link_kind="${_link_kind}"
 
-    # Mirror the other files in the Electron install dir back as symlinks so
-    # the per-profile binary can find its sibling shared libraries
-    # (RPATH=$ORIGIN looks for libffmpeg.so, libEGL.so, etc.) and Chromium can
-    # find its data files (.pak, locales/, resources/, version, icudtl.dat).
-    # Profile-agnostic: shared across all profiles in the lib dir.
-    _mirror_profile_siblings \
-        "$(dirname "$ELECTRON_BIN")" \
-        "$(dirname "$electron_bin_path")" \
-        "$(basename "$ELECTRON_BIN")"
+	# Mirror the other files in the Electron install dir back as symlinks so
+	# the per-profile binary can find its sibling shared libraries
+	# (RPATH=$ORIGIN looks for libffmpeg.so, libEGL.so, etc.) and Chromium can
+	# find its data files (.pak, locales/, resources/, version, icudtl.dat).
+	# Profile-agnostic: shared across all profiles in the lib dir.
+	_mirror_profile_siblings \
+		"$(dirname "${ELECTRON_BIN}")" \
+		"$(dirname "${electron_bin_path}")" \
+		"$(basename "${ELECTRON_BIN}")"
 
-    ln -s "$launcher_path" "$launcher_link"
+	ln -s "${launcher_path}" "${launcher_link}"
 
-    # Try to find the default-profile system .desktop to inherit Icon=, etc.
-    # The installed default file is "com.anthropic.Claude.desktop" (upstream's
-    # own identity), not "${APP_ID}.desktop" - APP_ID is only the binary/scope
-    # basename. The legacy "claude-desktop.desktop" name is also probed so a
-    # profile created on a not-yet-upgraded install still finds a source.
-    local source_desktop=""
-    for c in \
-        "/usr/share/applications/com.anthropic.Claude.desktop" \
-        "$HOME/.local/share/applications/com.anthropic.Claude.desktop" \
-        "/usr/share/applications/claude-desktop.desktop" \
-        "$HOME/.local/share/applications/claude-desktop.desktop"; do
-        if [[ -f "$c" ]]; then
-            source_desktop="$c"
-            break
-        fi
-    done
+	# Try to find the default-profile system .desktop to inherit Icon=, etc.
+	# The installed default file is "com.anthropic.Claude.desktop" (upstream's
+	# own identity), not "${APP_ID}.desktop" - APP_ID is only the binary/scope
+	# basename. The legacy "claude-desktop.desktop" name is also probed so a
+	# profile created on a not-yet-upgraded install still finds a source.
+	local source_desktop=""
+	for c in \
+		"/usr/share/applications/com.anthropic.Claude.desktop" \
+		"${HOME}/.local/share/applications/com.anthropic.Claude.desktop" \
+		"/usr/share/applications/claude-desktop.desktop" \
+		"${HOME}/.local/share/applications/claude-desktop.desktop"; do
+		if [[ -f "${c}" ]]; then
+			source_desktop="${c}"
+			break
+		fi
+	done
 
-    # Use an absolute Exec= path so the entry works without ~/.local/bin in
-    # PATH and so GNOME Shell's Overview accepts it. Pass --profile=NAME
-    # directly to the system launcher rather than relying on the per-profile
-    # symlink basename, since the symlink isn't on PATH for GNOME Shell.
-    local exec_line="Exec=${launcher_path} --profile=${name} %u"
+	# Use an absolute Exec= path so the entry works without ~/.local/bin in
+	# PATH and so GNOME Shell's Overview accepts it. Pass --profile=NAME
+	# directly to the system launcher rather than relying on the per-profile
+	# symlink basename, since the symlink isn't on PATH for GNOME Shell.
+	local exec_line="Exec=${launcher_path} --profile=${name} %u"
 
-    if [[ -n "$source_desktop" ]]; then
-        # Rewrite Name and Exec; drop MimeType= so the claude:// scheme remains
-        # owned by the system .desktop. The launcher routes incoming URLs to the
-        # right profile via the auth marker; if named profiles also claimed the
-        # scheme, xdg-mime ordering would short-circuit our routing for whichever
-        # entry got picked first. Also strip the Actions= key and every [Desktop
-        # Action ...] block: their Exec= lines hardcode the default `claude-desktop`
-        # binary, so a named profile's right-click "New chat" would open in the
-        # default profile. Simpler to drop them than to rewrite each per-action Exec.
-        #
-        # StartupWMClass is left as the inherited "com.anthropic.Claude" on
-        # purpose: the window's live app_id is "com.anthropic.Claude" for every
-        # profile (the shared app.asar desktopName wins), so a per-profile
-        # WMClass would never match the window. A distinct per-profile app_id
-        # needs a per-profile desktopName override (out of scope for #148).
-        awk -v name="$name" -v execline="$exec_line" '
+	if [[ -n "${source_desktop}" ]]; then
+		# Rewrite Name and Exec; drop MimeType= so the claude:// scheme remains
+		# owned by the system .desktop. The launcher routes incoming URLs to the
+		# right profile via the auth marker; if named profiles also claimed the
+		# scheme, xdg-mime ordering would short-circuit our routing for whichever
+		# entry got picked first. Also strip the Actions= key and every [Desktop
+		# Action ...] block: their Exec= lines hardcode the default `claude-desktop`
+		# binary, so a named profile's right-click "New chat" would open in the
+		# default profile. Simpler to drop them than to rewrite each per-action Exec.
+		#
+		# StartupWMClass is left as the inherited "com.anthropic.Claude" on
+		# purpose: the window's live app_id is "com.anthropic.Claude" for every
+		# profile (the shared app.asar desktopName wins), so a per-profile
+		# WMClass would never match the window. A distinct per-profile app_id
+		# needs a per-profile desktopName override (out of scope for #148).
+		awk -v name="${name}" -v execline="${exec_line}" '
             BEGIN { FS=OFS="="; drop=0 }
             /^\[Desktop Action / { drop=1; next }   # drop the whole action block
             /^\[Desktop Entry\]/ { drop=0 }
@@ -866,11 +883,11 @@ _create_profile() {
             /^MimeType=/ { next }
             /^Actions=/  { next }
             { print }
-        ' "$source_desktop" > "$desktop_file"
-    else
-        cat > "$desktop_file" <<EOF
+        ' "${source_desktop}" >"${desktop_file}"
+	else
+		cat >"${desktop_file}" <<EOF
 [Desktop Entry]
-Name=Claude ($name)
+Name=Claude (${name})
 ${exec_line}
 Terminal=false
 Type=Application
@@ -878,339 +895,384 @@ Icon=claude-desktop
 StartupWMClass=com.anthropic.Claude
 Categories=Utility;Development;
 EOF
-    fi
+	fi
 
-    if command -v update-desktop-database &>/dev/null; then
-        update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
-    fi
+	if command -v update-desktop-database &>/dev/null; then
+		update-desktop-database "${HOME}/.local/share/applications" 2>/dev/null || true
+	fi
 
-    echo "Created profile '$name'."
-    echo "  Electron binary:  $electron_bin_path  ($link_kind)"
-    echo "  Launcher symlink: $launcher_link"
-    echo "  Desktop file:     $desktop_file"
-    echo
-    echo "Launch from your application menu (entry: 'Claude ($name)'),"
-    echo "or run:    $launcher_path --profile=$name"
-    if [[ ":$PATH:" == *":$HOME/.local/bin:"* ]]; then
-        echo "or:        claude-desktop-$name"
-    fi
-    return 0
+	echo "Created profile '${name}'."
+	echo "  Electron binary:  ${electron_bin_path}  (${link_kind})"
+	echo "  Launcher symlink: ${launcher_link}"
+	echo "  Desktop file:     ${desktop_file}"
+	echo
+	echo "Launch from your application menu (entry: 'Claude (${name})'),"
+	echo "or run:    ${launcher_path} --profile=${name}"
+	if [[ ":${PATH}:" == *":${HOME}/.local/bin:"* ]]; then
+		echo "or:        claude-desktop-${name}"
+	fi
+	return 0
 }
 
 _delete_profile() {
-    local name="$1"
-    if [[ -z "$name" || "$name" == "default" ]]; then
-        echo >&2 "claude-desktop: cannot delete default; profile name required"
-        return 2
-    fi
-    if ! [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]]; then
-        echo >&2 "claude-desktop: invalid profile name '$name'"
-        return 2
-    fi
+	local name="$1"
+	if [[ -z "${name}" || "${name}" == "default" ]]; then
+		echo >&2 "claude-desktop: cannot delete default; profile name required"
+		return 2
+	fi
+	if ! [[ "${name}" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+		echo >&2 "claude-desktop: invalid profile name '${name}'"
+		return 2
+	fi
 
-    local electron_link="$HOME/.local/lib/claude-desktop/${APP_ID}-${name}"
-    local launcher_link="$HOME/.local/bin/claude-desktop-${name}"
-    local desktop_file="$HOME/.local/share/applications/com.anthropic.Claude-${name}.desktop"
-    # Legacy per-profile .desktop name from before the app-identity alignment;
-    # removed too so profiles created by an older launcher clean up fully.
-    local legacy_desktop_file="$HOME/.local/share/applications/claude-desktop-${name}.desktop"
+	local electron_link="${HOME}/.local/lib/claude-desktop/${APP_ID}-${name}"
+	local launcher_link="${HOME}/.local/bin/claude-desktop-${name}"
+	local desktop_file="${HOME}/.local/share/applications/com.anthropic.Claude-${name}.desktop"
+	# Legacy per-profile .desktop name from before the app-identity alignment;
+	# removed too so profiles created by an older launcher clean up fully.
+	local legacy_desktop_file="${HOME}/.local/share/applications/claude-desktop-${name}.desktop"
 
-    local removed=0
-    for f in "$electron_link" "$launcher_link" "$desktop_file" "$legacy_desktop_file"; do
-        if [[ -L "$f" || -f "$f" ]]; then
-            rm -f "$f"
-            echo "Removed: $f"
-            # NOTE: do NOT use ((removed++)) here -- post-increment returns
-            # the OLD value, which is 0 on the first hit. Under `set -e` that
-            # makes the whole script exit (treating 0 as a failed command),
-            # so only the first artifact would ever get removed per call.
-            # Use arithmetic assignment to always return non-zero exit status.
-            removed=$((removed + 1))
-        fi
-    done
+	local removed=0
+	for f in "${electron_link}" "${launcher_link}" "${desktop_file}" "${legacy_desktop_file}"; do
+		if [[ -L "${f}" || -f "${f}" ]]; then
+			rm -f "${f}"
+			echo "Removed: ${f}"
+			# NOTE: do NOT use ((removed++)) here -- post-increment returns
+			# the OLD value, which is 0 on the first hit. Under `set -e` that
+			# makes the whole script exit (treating 0 as a failed command),
+			# so only the first artifact would ever get removed per call.
+			# Use arithmetic assignment to always return non-zero exit status.
+			removed=$((removed + 1))
+		fi
+	done
 
-    if (( removed == 0 )); then
-        echo >&2 "claude-desktop: profile '$name' has no installed entry points (nothing to remove)"
-    fi
+	if ((removed == 0)); then
+		echo >&2 "claude-desktop: profile '${name}' has no installed entry points (nothing to remove)"
+	fi
 
-    if command -v update-desktop-database &>/dev/null; then
-        update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
-    fi
+	if command -v update-desktop-database &>/dev/null; then
+		update-desktop-database "${HOME}/.local/share/applications" 2>/dev/null || true
+	fi
 
-    echo
-    echo "User data preserved at: ${XDG_CONFIG_HOME:-$HOME/.config}/Claude-${name}"
-    echo "Code config preserved at: $HOME/.claude-${name}"
-    echo "Remove those manually if you also want to delete login state and history."
-    return 0
+	echo
+	echo "User data preserved at: ${XDG_CONFIG_HOME:-${HOME}/.config}/Claude-${name}"
+	echo "Code config preserved at: ${HOME}/.claude-${name}"
+	echo "Remove those manually if you also want to delete login state and history."
+	return 0
 }
 
 _list_profiles() {
-    local lib_dir="$HOME/.local/lib/claude-desktop"
-    echo "default  (config: ${XDG_CONFIG_HOME:-$HOME/.config}/Claude)"
-    if [[ ! -d "$lib_dir" ]]; then
-        return 0
-    fi
-    local prefix="${APP_ID}-"
-    local found=0
-    for link in "$lib_dir"/${prefix}*; do
-        [[ -L "$link" || -f "$link" ]] || continue
-        local base="${link##*/}"
-        local name="${base#$prefix}"
-        # Skip stray entries that don't match our naming
-        [[ "$name" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
-        echo "$name  (config: ${XDG_CONFIG_HOME:-$HOME/.config}/Claude-${name})"
-        found=1
-    done
-    if (( found == 0 )); then
-        echo "(no named profiles installed; create one with --create-profile=NAME)"
-    fi
+	local lib_dir="${HOME}/.local/lib/claude-desktop"
+	echo "default  (config: ${XDG_CONFIG_HOME:-${HOME}/.config}/Claude)"
+	if [[ ! -d "${lib_dir}" ]]; then
+		return 0
+	fi
+	local prefix="${APP_ID}-"
+	local found=0
+	for link in "${lib_dir}/${prefix}"*; do
+		[[ -L "${link}" || -f "${link}" ]] || continue
+		local base="${link##*/}"
+		local name="${base#"${prefix}"}"
+		# Skip stray entries that don't match our naming
+		[[ "${name}" =~ ^[a-zA-Z0-9_-]+$ ]] || continue
+		echo "${name}  (config: ${XDG_CONFIG_HOME:-${HOME}/.config}/Claude-${name})"
+		found=1
+	done
+	if ((found == 0)); then
+		echo "(no named profiles installed; create one with --create-profile=NAME)"
+	fi
 }
 
 _diagnose() {
-    echo '=== claude-desktop --diagnose ==='
-    echo
-    echo '--- Session ---'
-    echo "XDG_SESSION_TYPE = ${XDG_SESSION_TYPE:-(unset)}"
-    echo "XDG_CURRENT_DESKTOP = ${XDG_CURRENT_DESKTOP:-(unset)}"
-    # XDG_SESSION_DESKTOP is DM-dependent (SDDM/GDM may set plasma / an absolute
-    # path / nothing) and is NOT what our CU DE-detection keys off — we use
-    # XDG_CURRENT_DESKTOP. Surfaced here so a mismatch between the two is visible
-    # when triaging KDE-Wayland routing reports (issue #194).
-    echo "XDG_SESSION_DESKTOP = ${XDG_SESSION_DESKTOP:-(unset)}"
-    if [[ "${CLAUDE_NATIVE_TITLEBAR:-}" == '1' ]]; then
-        echo "Titlebar = native (CLAUDE_NATIVE_TITLEBAR=1)"
-    else
-        echo "Titlebar = integrated (default)"
-    fi
-    echo "WAYLAND_DISPLAY = ${WAYLAND_DISPLAY:-(unset)}"
-    echo "DISPLAY = ${DISPLAY:-(unset)}"
-    echo
-    echo '--- Binaries ---'
-    echo "ELECTRON_BIN = $ELECTRON_BIN"
-    # Don't run the binary — it IS the Claude app and launching it spawns
-    # a new instance. Read the bundled version file instead.
-    if [[ -n ${_electron_real:-} ]]; then
-        local _vfile
-        _vfile="$(dirname "${_electron_real}")/version"
-        if [[ -r $_vfile ]]; then
-            echo "electron version file = $(<"$_vfile")"
-        else
-            echo "electron version file = (missing at $_vfile; parsed major=$electron_major)"
-        fi
-    fi
-    echo "systemd-run = $(command -v systemd-run || echo '(missing)')"
-    if [[ -n "${XDG_RUNTIME_DIR:-}" && -S "${XDG_RUNTIME_DIR}/systemd/private" ]]; then
-        echo "systemd user socket = ${XDG_RUNTIME_DIR}/systemd/private (present)"
-    else
-        echo "systemd user socket = (missing or unreachable; scope wrap will be skipped)"
-    fi
-    echo "gsettings = $(command -v gsettings || echo '(missing)')"
-    echo "gdbus = $(command -v gdbus || echo '(missing)')"
-    echo
-    echo '--- App identity ---'
-    echo "APP_ID = $APP_ID"
-    echo "CLAUDE_PROFILE = ${CLAUDE_PROFILE:-(unset → default)}"
-    echo "config_dir = $config_dir"
-    echo "DESKTOP_ID = $DESKTOP_ID"
-    # The system-installed default .desktop is the portal-identity anchor that
-    # the systemd scope (app-com.anthropic.Claude-...scope) resolves back to. It
-    # is the default "com.anthropic.Claude.desktop"; named-profile .desktop files
-    # live user-local under ~/.local/share/applications/com.anthropic.Claude-<name>.desktop.
-    local desktop_file="/usr/share/applications/com.anthropic.Claude.desktop"
-    [[ -f $desktop_file ]] || desktop_file="/usr/share/applications/claude-desktop.desktop"
-    if [[ -f $desktop_file ]]; then
-        echo ".desktop file: $desktop_file (found)"
-    else
-        echo ".desktop file: $desktop_file (MISSING - portal identity will fail)"
-    fi
-    if [[ -n "${CLAUDE_APPIMAGE_PATH:-}" ]]; then
-        echo "CLAUDE_APPIMAGE_PATH = $CLAUDE_APPIMAGE_PATH"
-        if [[ -f "$_APPIMAGE_DESKTOP_FILE" ]]; then
-            local _ai_exec
-            _ai_exec=$(grep '^Exec=' "$_APPIMAGE_DESKTOP_FILE" 2>/dev/null | head -1)
-            echo "AppImage .desktop: $_APPIMAGE_DESKTOP_FILE (found)"
-            echo "  Exec = $_ai_exec"
-            if [[ "$_ai_exec" == *"$CLAUDE_APPIMAGE_PATH"* ]]; then
-                echo "  Status: UP TO DATE"
-            else
-                echo "  Status: STALE (path mismatch)"
-            fi
-        else
-            echo "AppImage .desktop: $_APPIMAGE_DESKTOP_FILE (MISSING - run --integrate)"
-        fi
-        if command -v xdg-mime &>/dev/null; then
-            local _handler
-            _handler=$(xdg-mime query default x-scheme-handler/claude 2>/dev/null || echo '(not set)')
-            echo "claude:// handler = $_handler"
-        fi
-    else
-        echo "CLAUDE_APPIMAGE_PATH = (unset - not an AppImage)"
-    fi
-    echo "APP_ASAR = $APP_ASAR"
-    echo
-    echo '--- xdg-desktop-portal GlobalShortcuts ---'
-    if command -v gdbus &>/dev/null; then
-        local portal_ver
-        portal_ver=$(gdbus call --session --dest org.freedesktop.portal.Desktop \
-            --object-path /org/freedesktop/portal/desktop \
-            --method org.freedesktop.DBus.Properties.Get \
-            org.freedesktop.portal.GlobalShortcuts version 2>&1 || echo '(failed)')
-        echo "Portal version = $portal_ver"
-    else
-        echo '(gdbus not installed — cannot probe portal)'
-    fi
-    if command -v gsettings &>/dev/null; then
-        echo
-        echo '--- Registered portal shortcut apps (GNOME) ---'
-        local apps
-        apps=$(gsettings get org.gnome.settings-daemon.global-shortcuts applications 2>/dev/null || echo '(schema missing)')
-        echo "org.gnome.settings-daemon.global-shortcuts applications = $apps"
-        if [[ $apps == '@as []' ]]; then
-            echo '(no app has completed the portal BindShortcuts+approval flow; expected on a fresh install)'
-        fi
-        echo
-        echo '--- GNOME custom-keybinding slot ---'
-        local cks
-        cks=$(gsettings get "$GNOME_HOTKEY_ROOT" custom-keybindings 2>/dev/null || echo '(schema missing)')
-        echo "custom-keybindings = $cks"
-        if [[ $cks == *"$GNOME_HOTKEY_SLOT"* ]]; then
-            echo 'claude-desktop hotkey slot: INSTALLED'
-            echo "  name    = $(gsettings get "${GNOME_HOTKEY_ROOT}.custom-keybinding:${GNOME_HOTKEY_SLOT}" name 2>&1)"
-            echo "  command = $(gsettings get "${GNOME_HOTKEY_ROOT}.custom-keybinding:${GNOME_HOTKEY_SLOT}" command 2>&1)"
-            echo "  binding = $(gsettings get "${GNOME_HOTKEY_ROOT}.custom-keybinding:${GNOME_HOTKEY_SLOT}" binding 2>&1)"
-        else
-            echo 'claude-desktop hotkey slot: NOT INSTALLED'
-            echo '(run: claude-desktop --install-gnome-hotkey)'
-        fi
-    fi
-    echo
-    echo '--- Computer Use ---'
-    # The package version pins every bundled bit (bridges, Electron, app.asar).
-    local _cu_pkg _cu_res _cu_b _cu_sum=''
-    # New package name first; claude-desktop-bin covers pre-rename installs.
-    _cu_pkg="$(pacman -Q claude-desktop-extra 2>/dev/null \
-        || pacman -Q claude-desktop-bin 2>/dev/null \
-        || dpkg-query -W -f='claude-desktop-extra ${Version}\n' claude-desktop-extra 2>/dev/null \
-        || dpkg-query -W -f='claude-desktop-bin ${Version}\n' claude-desktop-bin 2>/dev/null \
-        || rpm -q claude-desktop-extra 2>/dev/null \
-        || rpm -q claude-desktop-bin 2>/dev/null \
-        || echo '(no system package: AppImage/Nix/manual)')"
-    echo "package = $_cu_pkg"
-    _cu_res="$(dirname "$ELECTRON_BIN")/resources"
-    for _cu_b in x11-bridge wlroots-bridge gnome-portal-bridge kwin-portal-bridge; do
-        if [[ -x "$_cu_res/$_cu_b" ]]; then _cu_sum+=" $_cu_b"; else _cu_sum+=" $_cu_b(MISSING)"; fi
-    done
-    echo "bundled bridges =$_cu_sum"
-    if [[ "$(printf %s "${XDG_CURRENT_DESKTOP:-}" | tr '[:upper:]' '[:lower:]')" == *kde* ]] \
-        && [[ "${XDG_SESSION_TYPE:-}" == 'wayland' || -n "${WAYLAND_DISPLAY:-}" ]]; then
-        local _kv _kmaj _kmin
-        _kv="$(timeout 2 kwin_wayland --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
-        if [[ -n "$_kv" ]]; then
-            _kmaj="${_kv%%.*}"; _kmin="${_kv#*.}"; _kmin="${_kmin%%.*}"
-            if (( _kmaj > 6 || (_kmaj == 6 && _kmin >= 6) )); then
-                echo "KWin = $_kv (>= 6.6: native kwin-portal-bridge route)"
-            else
-                echo "KWin = $_kv (< 6.6: ydotool/spectacle fallback - update Plasma for the native route)"
-            fi
-        else
-            echo 'KWin = (version probe failed)'
-        fi
-        # End-to-end KWin-scripting self-test: portal-free, never pops a
-        # consent dialog; window titles are not printed (only a byte count).
-        if [[ -x "$_cu_res/kwin-portal-bridge" ]]; then
-            local _st_out _st_rc=0
-            _st_out="$(timeout 10 "$_cu_res/kwin-portal-bridge" windows 2>&1)" || _st_rc=$?
-            if [[ "$_st_rc" == 0 ]]; then
-                echo "kwin-portal-bridge windows = ok (${#_st_out} bytes)"
-            else
-                echo "kwin-portal-bridge windows = FAILED (exit $_st_rc)"
-                printf '%s\n' "$_st_out" | head -3 | sed 's/^/  /'
-            fi
-        fi
-    fi
-    echo
-    echo '--- Cowork VM capability (replicates the app probe) ---'
-    # Mirrors the native Cowork backend's capability probe. If any of qemuPath /
-    # firmwarePath / virtiofsdPath / kvm is missing, the app reports "VM not
-    # supported" and the workspace Download does nothing. The resource base is
-    # the exe-adjacent resources/ dir (= process.resourcesPath at runtime).
-    local _res_base
-    _res_base="$(dirname "$ELECTRON_BIN")/resources"
-    local _arch _qemu_bin
-    case "$(uname -m)" in
-        aarch64|arm64) _arch=arm64; _qemu_bin=qemu-system-aarch64 ;;
-        *)             _arch=x64;   _qemu_bin=qemu-system-x86_64 ;;
-    esac
-    echo "PATH (as diagnose sees it) = ${PATH:-(empty!)}"
-    # qemuPath: first on PATH that is executable
-    local _qemu_path=''
-    if command -v "$_qemu_bin" &>/dev/null; then _qemu_path="$(command -v "$_qemu_bin")"; fi
-    echo "qemuPath = ${_qemu_path:-NOT FOUND on PATH ($_qemu_bin)}"
-    # firmwarePath: first readable OVMF/AAVMF CODE candidate (must match the
-    # app's patched firmware array: CLAUDE_OVMF_CODE_PATH override first, then
-    # the fixed paths - see fix_cowork_firmware_paths_linux.nim)
-    local _fw='' _c
-    local _fw_candidates=()
-    [[ -n ${CLAUDE_OVMF_CODE_PATH:-} ]] && _fw_candidates+=("$CLAUDE_OVMF_CODE_PATH")
-    if [[ $_arch == arm64 ]]; then
-        _fw_candidates+=(/usr/share/AAVMF/AAVMF_CODE.fd)
-    else
-        _fw_candidates+=(/usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2/x64/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd)
-    fi
-    for _c in "${_fw_candidates[@]}"; do
-        if [[ -r $_c ]]; then _fw="$_c"; break; fi
-    done
-    echo "firmwarePath = ${_fw:-NOT FOUND (install edk2-ovmf / ovmf, or set CLAUDE_OVMF_CODE_PATH)}"
-    if [[ -n $_fw ]]; then
-        local _vars="${_fw/OVMF_CODE/OVMF_VARS}"; _vars="${_vars/AAVMF_CODE/AAVMF_VARS}"
-        echo "  -> derived VARS = $_vars ($([[ -r $_vars ]] && echo present || echo MISSING))"
-    fi
-    # virtiofsdPath: CLAUDE_VIRTIOFSD_PATH override first, then system paths
-    # (incl. NixOS /run/current-system/sw/bin - PR #178). The bundled copy under
-    # resources/ counts ONLY on Ubuntu 22.x - the app gates its bundled
-    # fallback on os-release id=ubuntu && version 22.* (jammy's apt has no
-    # standalone virtiofsd package; the bundled candidate is probed with X_OK).
-    # Listing it unconditionally here made --diagnose report "SHOULD pass" on
-    # systems where the real probe returns virtiofsdPath=null (issue #177, NixOS).
-    local _vfs=''
-    local _vfs_candidates=()
-    [[ -n ${CLAUDE_VIRTIOFSD_PATH:-} ]] && _vfs_candidates+=("$CLAUDE_VIRTIOFSD_PATH")
-    _vfs_candidates+=(/usr/libexec/virtiofsd /usr/lib/virtiofsd /usr/lib/qemu/virtiofsd /run/current-system/sw/bin/virtiofsd /usr/bin/virtiofsd)
-    for _c in "${_vfs_candidates[@]}"; do
-        if [[ -r $_c ]]; then _vfs="$_c"; break; fi
-    done
-    local _is_ubuntu22=''
-    [[ "$( { . /etc/os-release 2>/dev/null || . /usr/lib/os-release 2>/dev/null; } && echo "${ID:-} ${VERSION_ID:-}")" == 'ubuntu 22.'* ]] && _is_ubuntu22=1
-    if [[ -z $_vfs && -n $_is_ubuntu22 && -x "$_res_base/virtiofsd" ]]; then
-        _vfs="$_res_base/virtiofsd"
-    fi
-    echo "virtiofsdPath = ${_vfs:-NOT FOUND (install a system virtiofsd or set CLAUDE_VIRTIOFSD_PATH; the bundled copy only counts on Ubuntu 22.x)}"
-    if [[ -z $_vfs && -r "$_res_base/virtiofsd" ]]; then
-        echo "  (bundled $_res_base/virtiofsd exists but is IGNORED by the app - only used as a fallback on Ubuntu 22.x)"
-    fi
-    # helper + smol image (upstream resources/ layout)
-    echo "helperBinaryPath = $([[ -x $_res_base/cowork-linux-helper ]] && echo "$_res_base/cowork-linux-helper" || echo MISSING)"
-    echo "smolBinPath = $([[ -r $_res_base/smol-bin.$_arch.img ]] && echo "$_res_base/smol-bin.$_arch.img" || echo MISSING)"
-    # kvm + vsock (app checks R_OK|W_OK)
-    echo "/dev/kvm = $([[ -r /dev/kvm && -w /dev/kvm ]] && echo ok || { [[ -e /dev/kvm ]] && echo 'NO PERMISSION (add user to kvm group + relogin)' || echo 'MISSING (enable virtualization in BIOS)'; })"
-    echo "/dev/vhost-vsock = $([[ -r /dev/vhost-vsock && -w /dev/vhost-vsock ]] && echo ok || { [[ -e /dev/vhost-vsock ]] && echo 'NO PERMISSION' || echo 'MISSING (sudo modprobe vhost_vsock)'; })"
-    if [[ -n $_qemu_path && -n $_fw && -n $_vfs && -r /dev/kvm && -w /dev/kvm && -r /dev/vhost-vsock && -w /dev/vhost-vsock ]]; then
-        echo "=> capability probe SHOULD pass (Cowork supported)"
-    else
-        echo "=> capability probe WOULD FAIL - fix the NOT-FOUND/MISSING item(s) above"
-    fi
-    echo
-    echo '--- Recent launcher log (last 10 lines) ---'
-    local logf="${XDG_CACHE_HOME:-$HOME/.cache}/claude-desktop/launcher.log"
-    if [[ -f $logf || -f $logf.old ]]; then
-        # Read across the rotated backup so the last 10 lines survive a
-        # rotation that just happened at startup. cat exits non-zero when one
-        # of the files is missing (no .old before the first rotation) - under
-        # set -euo pipefail that would abort --diagnose, hence the || true.
-        cat "$logf.old" "$logf" 2>/dev/null | tail -10 || true
-    else
-        echo '(no launcher.log yet)'
-    fi
+	echo '=== claude-desktop --diagnose ==='
+	echo
+	echo '--- Session ---'
+	echo "XDG_SESSION_TYPE = ${XDG_SESSION_TYPE:-(unset)}"
+	echo "XDG_CURRENT_DESKTOP = ${XDG_CURRENT_DESKTOP:-(unset)}"
+	# XDG_SESSION_DESKTOP is DM-dependent (SDDM/GDM may set plasma / an absolute
+	# path / nothing) and is NOT what our CU DE-detection keys off — we use
+	# XDG_CURRENT_DESKTOP. Surfaced here so a mismatch between the two is visible
+	# when triaging KDE-Wayland routing reports (issue #194).
+	echo "XDG_SESSION_DESKTOP = ${XDG_SESSION_DESKTOP:-(unset)}"
+	if [[ "${CLAUDE_NATIVE_TITLEBAR:-}" == '1' ]]; then
+		echo "Titlebar = native (CLAUDE_NATIVE_TITLEBAR=1)"
+	else
+		echo "Titlebar = integrated (default)"
+	fi
+	echo "WAYLAND_DISPLAY = ${WAYLAND_DISPLAY:-(unset)}"
+	echo "DISPLAY = ${DISPLAY:-(unset)}"
+	echo
+	echo '--- Binaries ---'
+	echo "ELECTRON_BIN = ${ELECTRON_BIN}"
+	# Don't run the binary — it IS the Claude app and launching it spawns
+	# a new instance. Read the bundled version file instead.
+	if [[ -n ${_electron_real:-} ]]; then
+		local _vfile
+		_vfile="$(dirname "${_electron_real}")/version"
+		if [[ -r ${_vfile} ]]; then
+			echo "electron version file = $(<"${_vfile}")"
+		else
+			echo "electron version file = (missing at ${_vfile}; parsed major=${electron_major})"
+		fi
+	fi
+	local systemd_run_path gsettings_path gdbus_path
+	systemd_run_path=$(command -v systemd-run || echo '(missing)')
+	echo "systemd-run = ${systemd_run_path}"
+	if [[ -n "${XDG_RUNTIME_DIR:-}" && -S "${XDG_RUNTIME_DIR}/systemd/private" ]]; then
+		echo "systemd user socket = ${XDG_RUNTIME_DIR}/systemd/private (present)"
+	else
+		echo "systemd user socket = (missing or unreachable; scope wrap will be skipped)"
+	fi
+	gsettings_path=$(command -v gsettings || echo '(missing)')
+	gdbus_path=$(command -v gdbus || echo '(missing)')
+	echo "gsettings = ${gsettings_path}"
+	echo "gdbus = ${gdbus_path}"
+	echo
+	echo '--- App identity ---'
+	echo "APP_ID = ${APP_ID}"
+	echo "CLAUDE_PROFILE = ${CLAUDE_PROFILE:-(unset → default)}"
+	echo "config_dir = ${config_dir}"
+	echo "DESKTOP_ID = ${DESKTOP_ID}"
+	# The system-installed default .desktop is the portal-identity anchor that
+	# the systemd scope (app-com.anthropic.Claude-...scope) resolves back to. It
+	# is the default "com.anthropic.Claude.desktop"; named-profile .desktop files
+	# live user-local under ~/.local/share/applications/com.anthropic.Claude-<name>.desktop.
+	local desktop_file="/usr/share/applications/com.anthropic.Claude.desktop"
+	[[ -f ${desktop_file} ]] || desktop_file="/usr/share/applications/claude-desktop.desktop"
+	if [[ -f ${desktop_file} ]]; then
+		echo ".desktop file: ${desktop_file} (found)"
+	else
+		echo ".desktop file: ${desktop_file} (MISSING - portal identity will fail)"
+	fi
+	if [[ -n "${CLAUDE_APPIMAGE_PATH:-}" ]]; then
+		echo "CLAUDE_APPIMAGE_PATH = ${CLAUDE_APPIMAGE_PATH}"
+		if [[ -f "${_APPIMAGE_DESKTOP_FILE}" ]]; then
+			local _ai_exec
+			_ai_exec=$(grep '^Exec=' "${_APPIMAGE_DESKTOP_FILE}" 2>/dev/null | head -1)
+			echo "AppImage .desktop: ${_APPIMAGE_DESKTOP_FILE} (found)"
+			echo "  Exec = ${_ai_exec}"
+			if [[ "${_ai_exec}" == *"${CLAUDE_APPIMAGE_PATH}"* ]]; then
+				echo "  Status: UP TO DATE"
+			else
+				echo "  Status: STALE (path mismatch)"
+			fi
+		else
+			echo "AppImage .desktop: ${_APPIMAGE_DESKTOP_FILE} (MISSING - run --integrate)"
+		fi
+		if command -v xdg-mime &>/dev/null; then
+			local _handler
+			_handler=$(xdg-mime query default x-scheme-handler/claude 2>/dev/null || echo '(not set)')
+			echo "claude:// handler = ${_handler}"
+		fi
+	else
+		echo "CLAUDE_APPIMAGE_PATH = (unset - not an AppImage)"
+	fi
+	echo "APP_ASAR = ${APP_ASAR}"
+	echo
+	echo '--- xdg-desktop-portal GlobalShortcuts ---'
+	if command -v gdbus &>/dev/null; then
+		local portal_ver
+		portal_ver=$(gdbus call --session --dest org.freedesktop.portal.Desktop \
+			--object-path /org/freedesktop/portal/desktop \
+			--method org.freedesktop.DBus.Properties.Get \
+			org.freedesktop.portal.GlobalShortcuts version 2>&1 || echo '(failed)')
+		echo "Portal version = ${portal_ver}"
+	else
+		echo '(gdbus not installed — cannot probe portal)'
+	fi
+	if command -v gsettings &>/dev/null; then
+		echo
+		echo '--- Registered portal shortcut apps (GNOME) ---'
+		local apps
+		apps=$(gsettings get org.gnome.settings-daemon.global-shortcuts applications 2>/dev/null || echo '(schema missing)')
+		echo "org.gnome.settings-daemon.global-shortcuts applications = ${apps}"
+		if [[ ${apps} == '@as []' ]]; then
+			echo '(no app has completed the portal BindShortcuts+approval flow; expected on a fresh install)'
+		fi
+		echo
+		echo '--- GNOME custom-keybinding slot ---'
+		local cks hotkey_name hotkey_command hotkey_binding
+		cks=$(gsettings get "${GNOME_HOTKEY_ROOT}" custom-keybindings 2>/dev/null || echo '(schema missing)')
+		echo "custom-keybindings = ${cks}"
+		if [[ ${cks} == *"${GNOME_HOTKEY_SLOT}"* ]]; then
+			echo 'claude-desktop hotkey slot: INSTALLED'
+			hotkey_name=$(gsettings get "${GNOME_HOTKEY_ROOT}.custom-keybinding:${GNOME_HOTKEY_SLOT}" name 2>&1) || true
+			hotkey_command=$(gsettings get "${GNOME_HOTKEY_ROOT}.custom-keybinding:${GNOME_HOTKEY_SLOT}" command 2>&1) || true
+			hotkey_binding=$(gsettings get "${GNOME_HOTKEY_ROOT}.custom-keybinding:${GNOME_HOTKEY_SLOT}" binding 2>&1) || true
+			echo "  name    = ${hotkey_name}"
+			echo "  command = ${hotkey_command}"
+			echo "  binding = ${hotkey_binding}"
+		else
+			echo 'claude-desktop hotkey slot: NOT INSTALLED'
+			echo '(run: claude-desktop --install-gnome-hotkey)'
+		fi
+	fi
+	echo
+	echo '--- Computer Use ---'
+	# The package version pins every bundled bit (bridges, Electron, app.asar).
+	local _cu_pkg _cu_res _cu_b _cu_sum=''
+	# New package name first; claude-desktop-bin covers pre-rename installs.
+	_cu_pkg="$(pacman -Q claude-desktop-extra 2>/dev/null \
+		|| pacman -Q claude-desktop-bin 2>/dev/null \
+		|| dpkg-query -W -f='claude-desktop-extra ${Version}\n' claude-desktop-extra 2>/dev/null \
+		|| dpkg-query -W -f='claude-desktop-bin ${Version}\n' claude-desktop-bin 2>/dev/null \
+		|| rpm -q claude-desktop-extra 2>/dev/null \
+		|| rpm -q claude-desktop-bin 2>/dev/null \
+		|| echo '(no system package: AppImage/Nix/manual)')"
+	echo "package = ${_cu_pkg}"
+	_cu_res="$(dirname "${ELECTRON_BIN}")/resources"
+	for _cu_b in x11-bridge wlroots-bridge gnome-portal-bridge kwin-portal-bridge; do
+		if [[ -x "${_cu_res}/${_cu_b}" ]]; then _cu_sum+=" ${_cu_b}"; else _cu_sum+=" ${_cu_b}(MISSING)"; fi
+	done
+	echo "bundled bridges =${_cu_sum}"
+	local desktop_lower
+	desktop_lower=$(printf %s "${XDG_CURRENT_DESKTOP:-}" | tr '[:upper:]' '[:lower:]') || true
+	if [[ "${desktop_lower}" == *kde* ]] \
+		&& [[ "${XDG_SESSION_TYPE:-}" == 'wayland' || -n "${WAYLAND_DISPLAY:-}" ]]; then
+		local _kv _kmaj _kmin
+		_kv="$(timeout 2 kwin_wayland --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)"
+		if [[ -n "${_kv}" ]]; then
+			_kmaj="${_kv%%.*}"
+			_kmin="${_kv#*.}"
+			_kmin="${_kmin%%.*}"
+			if ((_kmaj > 6 || (_kmaj == 6 && _kmin >= 6))); then
+				echo "KWin = ${_kv} (>= 6.6: native kwin-portal-bridge route)"
+			else
+				echo "KWin = ${_kv} (< 6.6: ydotool/spectacle fallback - update Plasma for the native route)"
+			fi
+		else
+			echo 'KWin = (version probe failed)'
+		fi
+		# End-to-end KWin-scripting self-test: portal-free, never pops a
+		# consent dialog; window titles are not printed (only a byte count).
+		if [[ -x "${_cu_res}/kwin-portal-bridge" ]]; then
+			local _st_out _st_rc=0
+			_st_out="$(timeout 10 "${_cu_res}/kwin-portal-bridge" windows 2>&1)" || _st_rc=$?
+			if [[ "${_st_rc}" == 0 ]]; then
+				echo "kwin-portal-bridge windows = ok (${#_st_out} bytes)"
+			else
+				echo "kwin-portal-bridge windows = FAILED (exit ${_st_rc})"
+				printf '%s\n' "${_st_out}" | head -3 | sed 's/^/  /'
+			fi
+		fi
+	fi
+	echo
+	echo '--- Cowork VM capability (replicates the app probe) ---'
+	# Mirrors the native Cowork backend's capability probe. If any of qemuPath /
+	# firmwarePath / virtiofsdPath / kvm is missing, the app reports "VM not
+	# supported" and the workspace Download does nothing. The resource base is
+	# the exe-adjacent resources/ dir (= process.resourcesPath at runtime).
+	local _res_base
+	_res_base="$(dirname "${ELECTRON_BIN}")/resources"
+	local _arch _qemu_bin
+	case "$(uname -m)" in
+		aarch64 | arm64)
+			_arch=arm64
+			_qemu_bin=qemu-system-aarch64
+			;;
+		*)
+			_arch=x64
+			_qemu_bin=qemu-system-x86_64
+			;;
+	esac
+	echo "PATH (as diagnose sees it) = ${PATH:-(empty!)}"
+	# qemuPath: first on PATH that is executable
+	local _qemu_path=''
+	if command -v "${_qemu_bin}" &>/dev/null; then _qemu_path="$(command -v "${_qemu_bin}")"; fi
+	echo "qemuPath = ${_qemu_path:-NOT FOUND on PATH (${_qemu_bin})}"
+	# firmwarePath: first readable OVMF/AAVMF CODE candidate (must match the
+	# app's patched firmware array: CLAUDE_OVMF_CODE_PATH override first, then
+	# the fixed paths - see fix_cowork_firmware_paths_linux.nim)
+	local _fw='' _c
+	local _fw_candidates=()
+	[[ -n ${CLAUDE_OVMF_CODE_PATH:-} ]] && _fw_candidates+=("${CLAUDE_OVMF_CODE_PATH}")
+	if [[ ${_arch} == arm64 ]]; then
+		_fw_candidates+=(/usr/share/AAVMF/AAVMF_CODE.fd)
+	else
+		_fw_candidates+=(/usr/share/edk2/ovmf/OVMF_CODE.fd /usr/share/edk2/x64/OVMF_CODE.4m.fd /usr/share/edk2/x64/OVMF_CODE.fd /usr/share/OVMF/OVMF_CODE_4M.fd /usr/share/OVMF/OVMF_CODE.fd)
+	fi
+	for _c in "${_fw_candidates[@]}"; do
+		if [[ -r ${_c} ]]; then
+			_fw="${_c}"
+			break
+		fi
+	done
+	echo "firmwarePath = ${_fw:-NOT FOUND (install edk2-ovmf / ovmf, or set CLAUDE_OVMF_CODE_PATH)}"
+	if [[ -n ${_fw} ]]; then
+		local _vars="${_fw/OVMF_CODE/OVMF_VARS}" _vars_status
+		_vars="${_vars/AAVMF_CODE/AAVMF_VARS}"
+		if [[ -r ${_vars} ]]; then _vars_status=present; else _vars_status=MISSING; fi
+		echo "  -> derived VARS = ${_vars} (${_vars_status})"
+	fi
+	# virtiofsdPath: CLAUDE_VIRTIOFSD_PATH override first, then system paths
+	# (incl. NixOS /run/current-system/sw/bin - PR #178). The bundled copy under
+	# resources/ counts ONLY on Ubuntu 22.x - the app gates its bundled
+	# fallback on os-release id=ubuntu && version 22.* (jammy's apt has no
+	# standalone virtiofsd package; the bundled candidate is probed with X_OK).
+	# Listing it unconditionally here made --diagnose report "SHOULD pass" on
+	# systems where the real probe returns virtiofsdPath=null (issue #177, NixOS).
+	local _vfs=''
+	local _vfs_candidates=()
+	[[ -n ${CLAUDE_VIRTIOFSD_PATH:-} ]] && _vfs_candidates+=("${CLAUDE_VIRTIOFSD_PATH}")
+	_vfs_candidates+=(/usr/libexec/virtiofsd /usr/lib/virtiofsd /usr/lib/qemu/virtiofsd /run/current-system/sw/bin/virtiofsd /usr/bin/virtiofsd)
+	for _c in "${_vfs_candidates[@]}"; do
+		if [[ -r ${_c} ]]; then
+			_vfs="${_c}"
+			break
+		fi
+	done
+	local _is_ubuntu22=''
+	local _os_release
+	_os_release=$({ . /etc/os-release 2>/dev/null || . /usr/lib/os-release 2>/dev/null; } && echo "${ID:-} ${VERSION_ID:-}") || true
+	[[ "${_os_release}" == 'ubuntu 22.'* ]] && _is_ubuntu22=1
+	if [[ -z ${_vfs} && -n ${_is_ubuntu22} && -x "${_res_base}/virtiofsd" ]]; then
+		_vfs="${_res_base}/virtiofsd"
+	fi
+	echo "virtiofsdPath = ${_vfs:-NOT FOUND (install a system virtiofsd or set CLAUDE_VIRTIOFSD_PATH; the bundled copy only counts on Ubuntu 22.x)}"
+	if [[ -z ${_vfs} && -r "${_res_base}/virtiofsd" ]]; then
+		echo "  (bundled ${_res_base}/virtiofsd exists but is IGNORED by the app - only used as a fallback on Ubuntu 22.x)"
+	fi
+	# helper + smol image (upstream resources/ layout)
+	local _helper_path=MISSING _smol_path=MISSING
+	[[ -x ${_res_base}/cowork-linux-helper ]] && _helper_path="${_res_base}/cowork-linux-helper"
+	[[ -r ${_res_base}/smol-bin.${_arch}.img ]] && _smol_path="${_res_base}/smol-bin.${_arch}.img"
+	echo "helperBinaryPath = ${_helper_path}"
+	echo "smolBinPath = ${_smol_path}"
+	# kvm + vsock (app checks R_OK|W_OK)
+	local _kvm_status _vsock_status
+	if [[ -r /dev/kvm && -w /dev/kvm ]]; then
+		_kvm_status=ok
+	elif [[ -e /dev/kvm ]]; then
+		_kvm_status='NO PERMISSION (add user to kvm group + relogin)'
+	else
+		_kvm_status='MISSING (enable virtualization in BIOS)'
+	fi
+	if [[ -r /dev/vhost-vsock && -w /dev/vhost-vsock ]]; then
+		_vsock_status=ok
+	elif [[ -e /dev/vhost-vsock ]]; then
+		_vsock_status='NO PERMISSION'
+	else
+		_vsock_status='MISSING (sudo modprobe vhost_vsock)'
+	fi
+	echo "/dev/kvm = ${_kvm_status}"
+	echo "/dev/vhost-vsock = ${_vsock_status}"
+	if [[ -n ${_qemu_path} && -n ${_fw} && -n ${_vfs} && -r /dev/kvm && -w /dev/kvm && -r /dev/vhost-vsock && -w /dev/vhost-vsock ]]; then
+		echo "=> capability probe SHOULD pass (Cowork supported)"
+	else
+		echo "=> capability probe WOULD FAIL - fix the NOT-FOUND/MISSING item(s) above"
+	fi
+	echo
+	echo '--- Recent launcher log (last 10 lines) ---'
+	local logf="${XDG_CACHE_HOME:-${HOME}/.cache}/claude-desktop/launcher.log"
+	if [[ -f ${logf} || -f ${logf}.old ]]; then
+		# Read across the rotated backup so the last 10 lines survive a
+		# rotation that just happened at startup. cat exits non-zero when one
+		# of the files is missing (no .old before the first rotation) - under
+		# set -euo pipefail that would abort --diagnose, hence the || true.
+		cat "${logf}.old" "${logf}" 2>/dev/null | tail -10 || true
+	else
+		echo '(no launcher.log yet)'
+	fi
 }
 
 # ---------------------------------------------------------------------------
@@ -1222,35 +1284,39 @@ _diagnose() {
 # (e.g. dangling per-profile from a moved Nix store path) — we want the next
 # launch step to use the freshly materialised per-profile binary so WM_CLASS /
 # Wayland app_id reflect the profile.
-if [[ -n "$profile_suffix" ]]; then
-    _refresh_profile_binary_if_stale || true
-    _profile_bin="$HOME/.local/lib/claude-desktop/${APP_ID}${profile_suffix}"
-    if [[ -x "$_profile_bin" && "$ELECTRON_BIN" != "$_profile_bin" ]]; then
-        ELECTRON_BIN="$_profile_bin"
-    fi
+if [[ -n "${profile_suffix}" ]]; then
+	set +e
+	_refresh_profile_binary_if_stale
+	set -e
+	_profile_bin="${HOME}/.local/lib/claude-desktop/${APP_ID}${profile_suffix}"
+	if [[ -x "${_profile_bin}" && "${ELECTRON_BIN}" != "${_profile_bin}" ]]; then
+		ELECTRON_BIN="${_profile_bin}"
+	fi
 
-    # Silent-degradation hint: --profile=NAME isolates state but the
-    # WM_CLASS / Wayland app_id stays as the default unless --create-profile
-    # has materialised a per-profile binary. Most users will want both.
-    # Suppress with CLAUDE_PROFILE_QUIET=1.
-    if [[ ! -e "$_profile_bin" && -z "${CLAUDE_PROFILE_QUIET:-}" ]]; then
-        echo >&2 "claude-desktop: profile '$CLAUDE_PROFILE' has isolated state but no per-profile WM identity."
-        echo >&2 "  Windows will share the default profile's taskbar entry. To fix:"
-        echo >&2 "    claude-desktop --create-profile=$CLAUDE_PROFILE"
-        echo >&2 "  (suppress this message with CLAUDE_PROFILE_QUIET=1)"
-    fi
+	# Silent-degradation hint: --profile=NAME isolates state but the
+	# WM_CLASS / Wayland app_id stays as the default unless --create-profile
+	# has materialised a per-profile binary. Most users will want both.
+	# Suppress with CLAUDE_PROFILE_QUIET=1.
+	if [[ ! -e "${_profile_bin}" && -z "${CLAUDE_PROFILE_QUIET:-}" ]]; then
+		echo >&2 "claude-desktop: profile '${CLAUDE_PROFILE}' has isolated state but no per-profile WM identity."
+		echo >&2 "  Windows will share the default profile's taskbar entry. To fix:"
+		echo >&2 "    claude-desktop --create-profile=${CLAUDE_PROFILE}"
+		echo >&2 "  (suppress this message with CLAUDE_PROFILE_QUIET=1)"
+	fi
 fi
 
 # ---------------------------------------------------------------------------
 # AppImage auto-integration (protocol handler + menu entry)
 # ---------------------------------------------------------------------------
 if [[ -n "${CLAUDE_APPIMAGE_PATH:-}" ]]; then
-    _appimage_integrate quiet || true
+	set +e
+	_appimage_integrate quiet
+	set -e
 fi
 
 case "${1:-}" in
-    --help|-h)
-        cat <<'HELP'
+	--help | -h)
+		cat <<'HELP'
 Usage: claude-desktop [OPTION]
 
 Launch Claude Desktop, or run a subcommand.
@@ -1343,71 +1409,72 @@ Environment variables:
 
 All other arguments are passed through to Electron.
 HELP
-        exit 0
-        ;;
-    --install-gnome-hotkey)
-        shift
-        _install_gnome_hotkey "$@"
-        exit $?
-        ;;
-    --uninstall-gnome-hotkey)
-        shift
-        _uninstall_gnome_hotkey
-        exit $?
-        ;;
-    --create-profile=*)
-        _create_profile "${1#--create-profile=}"
-        exit $?
-        ;;
-    --create-profile)
-        shift
-        _create_profile "${1:-}"
-        exit $?
-        ;;
-    --delete-profile=*)
-        _delete_profile "${1#--delete-profile=}"
-        exit $?
-        ;;
-    --delete-profile)
-        shift
-        _delete_profile "${1:-}"
-        exit $?
-        ;;
-    --list-profiles)
-        _list_profiles
-        exit 0
-        ;;
-    --integrate)
-        _appimage_integrate
-        exit $?
-        ;;
-    --unintegrate)
-        _appimage_unintegrate
-        exit $?
-        ;;
-    --toggle|--toggle-quick-entry)
-        # Fast Quick Entry toggle via Unix domain socket (~5-25 ms).
-        # Falls through to Electron if socket unavailable (cold start).
-        # --toggle-quick-entry is the original flag; --toggle is the short alias.
-        _SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/claude-desktop-qe${profile_suffix}.sock"
-        if [ -S "$_SOCK" ]; then
-            if command -v socat >/dev/null 2>&1; then
-                socat /dev/null "UNIX-CLIENT:$_SOCK" 2>/dev/null && exit 0
-            fi
-            if command -v python3 >/dev/null 2>&1; then
-                python3 -c "import socket,sys;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.settimeout(0.5);s.connect(sys.argv[1]);s.close()" "$_SOCK" 2>/dev/null && exit 0
-            fi
-            echo "[launcher] socket exists but no client (socat/python3) found — falling back to Electron" >&2
-        fi
-        ;;
-    --diagnose)
-        shift
-        # Run this subcommand even though it references variables (like
-        # electron_major, platform_mode) that are set below; we re-read what
-        # we need inside _diagnose. Electron version detection happens below
-        # because both _diagnose and the normal launch path need it.
-        _diagnose_requested=1
-        ;;
+		exit 0
+		;;
+	--install-gnome-hotkey)
+		shift
+		_install_gnome_hotkey "$@"
+		exit $?
+		;;
+	--uninstall-gnome-hotkey)
+		shift
+		_uninstall_gnome_hotkey
+		exit $?
+		;;
+	--create-profile=*)
+		_create_profile "${1#--create-profile=}"
+		exit $?
+		;;
+	--create-profile)
+		shift
+		_create_profile "${1:-}"
+		exit $?
+		;;
+	--delete-profile=*)
+		_delete_profile "${1#--delete-profile=}"
+		exit $?
+		;;
+	--delete-profile)
+		shift
+		_delete_profile "${1:-}"
+		exit $?
+		;;
+	--list-profiles)
+		_list_profiles
+		exit 0
+		;;
+	--integrate)
+		_appimage_integrate
+		exit $?
+		;;
+	--unintegrate)
+		_appimage_unintegrate
+		exit $?
+		;;
+	--toggle | --toggle-quick-entry)
+		# Fast Quick Entry toggle via Unix domain socket (~5-25 ms).
+		# Falls through to Electron if socket unavailable (cold start).
+		# --toggle-quick-entry is the original flag; --toggle is the short alias.
+		_SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/claude-desktop-qe${profile_suffix}.sock"
+		if [[ -S "${_SOCK}" ]]; then
+			if command -v socat >/dev/null 2>&1; then
+				socat /dev/null "UNIX-CLIENT:${_SOCK}" 2>/dev/null && exit 0
+			fi
+			if command -v python3 >/dev/null 2>&1; then
+				python3 -c "import socket,sys;s=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM);s.settimeout(0.5);s.connect(sys.argv[1]);s.close()" "${_SOCK}" 2>/dev/null && exit 0
+			fi
+			echo "[launcher] socket exists but no client (socat/python3) found — falling back to Electron" >&2
+		fi
+		;;
+	--diagnose)
+		shift
+		# Run this subcommand even though it references variables (like
+		# electron_major, platform_mode) that are set below; we re-read what
+		# we need inside _diagnose. Electron version detection happens below
+		# because both _diagnose and the normal launch path need it.
+		_diagnose_requested=1
+		;;
+	*) ;;
 esac
 
 # ---------------------------------------------------------------------------
@@ -1419,17 +1486,17 @@ esac
 # backported to 40.x and 41.x, not to 39.
 
 electron_major=0
-_electron_real="$ELECTRON_BIN"
-[[ $_electron_real == electron ]] && _electron_real="$(command -v electron 2>/dev/null || true)"
-if [[ -n $_electron_real ]]; then
-    _version_file="$(dirname "$_electron_real")/version"
-    if [[ -r $_version_file ]]; then
-        electron_major=$(awk -F. 'NR==1{sub(/^v/,"",$1); print $1+0; exit}' "$_version_file" 2>/dev/null || echo 0)
-    fi
-    # Fall back to asking Electron itself (slightly slower, always works)
-    if (( electron_major == 0 )); then
-        electron_major=$("$_electron_real" --version 2>/dev/null | awk -F. 'NR==1{sub(/^v/,"",$1); print $1+0; exit}' || echo 0)
-    fi
+_electron_real="${ELECTRON_BIN}"
+[[ ${_electron_real} == electron ]] && _electron_real="$(command -v electron 2>/dev/null || true)"
+if [[ -n ${_electron_real} ]]; then
+	_version_file="$(dirname "${_electron_real}")/version"
+	if [[ -r ${_version_file} ]]; then
+		electron_major=$(awk -F. 'NR==1{sub(/^v/,"",$1); print $1+0; exit}' "${_version_file}" 2>/dev/null || echo 0)
+	fi
+	# Fall back to asking Electron itself (slightly slower, always works)
+	if ((electron_major == 0)); then
+		electron_major=$("${_electron_real}" --version 2>/dev/null | awk -F. 'NR==1{sub(/^v/,"",$1); print $1+0; exit}' || echo 0)
+	fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -1437,10 +1504,10 @@ fi
 # ---------------------------------------------------------------------------
 
 if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
-    echo >&2 'claude-desktop: No display server detected.'
-    echo >&2 'Both $DISPLAY and $WAYLAND_DISPLAY are unset.'
-    echo >&2 'Run from within an X11 or Wayland session, not a TTY.'
-    exit 1
+	echo >&2 'claude-desktop: No display server detected.'
+	echo >&2 "Both \$DISPLAY and \$WAYLAND_DISPLAY are unset."
+	echo >&2 'Run from within an X11 or Wayland session, not a TTY.'
+	exit 1
 fi
 
 # ---------------------------------------------------------------------------
@@ -1464,25 +1531,25 @@ is_wayland=false
 
 # Determine platform mode: x11, wayland, or xwayland
 platform_mode=x11
-if [[ $is_wayland == true ]]; then
-    platform_mode=wayland
+if [[ ${is_wayland} == true ]]; then
+	platform_mode=wayland
 
-    if (( electron_major > 0 && electron_major < 40 )); then
-        warn_msg="Electron $electron_major has a broken GlobalShortcutsPortal (electron/electron#49806, fixed in 40+/41+). Global hotkeys will only work when Claude Desktop has focus. Update your Electron package; Arch: sudo pacman -Syu electron. Escape hatch if you can't update: CLAUDE_USE_XWAYLAND=1."
-        log "$warn_msg"
-        echo >&2 "claude-desktop: $warn_msg"
-    fi
+	if ((electron_major > 0 && electron_major < 40)); then
+		warn_msg="Electron ${electron_major} has a broken GlobalShortcutsPortal (electron/electron#49806, fixed in 40+/41+). Global hotkeys will only work when Claude Desktop has focus. Update your Electron package; Arch: sudo pacman -Syu electron. Escape hatch if you can't update: CLAUDE_USE_XWAYLAND=1."
+		log "${warn_msg}"
+		echo >&2 "claude-desktop: ${warn_msg}"
+	fi
 
-    if [[ "${CLAUDE_USE_XWAYLAND:-}" == '1' ]]; then
-        # User explicitly wants XWayland — respect it unless compositor can't do it
-        platform_mode=xwayland
-        desktop="${XDG_CURRENT_DESKTOP:-}"
-        desktop="${desktop,,}"
-        if [[ -n "${NIRI_SOCKET:-}" || "$desktop" == *niri* ]]; then
-            log 'Niri detected — ignoring CLAUDE_USE_XWAYLAND (no XWayland support)'
-            platform_mode=wayland
-        fi
-    fi
+	if [[ "${CLAUDE_USE_XWAYLAND:-}" == '1' ]]; then
+		# User explicitly wants XWayland — respect it unless compositor can't do it
+		platform_mode=xwayland
+		desktop="${XDG_CURRENT_DESKTOP:-}"
+		desktop="${desktop,,}"
+		if [[ -n "${NIRI_SOCKET:-}" || "${desktop}" == *niri* ]]; then
+			log 'Niri detected — ignoring CLAUDE_USE_XWAYLAND (no XWayland support)'
+			platform_mode=wayland
+		fi
+	fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -1496,10 +1563,10 @@ ELECTRON_ARGS=()
 # renders the system frame. In integrated mode, keep it enabled so
 # titleBarOverlay works.
 if [[ "${CLAUDE_NATIVE_TITLEBAR:-}" == '1' ]]; then
-    ELECTRON_ARGS+=('--disable-features=CustomTitlebar')
-    log 'Titlebar: native (CLAUDE_NATIVE_TITLEBAR=1)'
+	ELECTRON_ARGS+=('--disable-features=CustomTitlebar')
+	log 'Titlebar: native (CLAUDE_NATIVE_TITLEBAR=1)'
 else
-    log 'Titlebar: integrated (default)'
+	log 'Titlebar: integrated (default)'
 fi
 
 # Force ARGB visuals so `transparent:true` popups (Quick Entry) render their
@@ -1517,57 +1584,58 @@ ELECTRON_ARGS+=('--enable-transparent-visuals')
 # exposes the API; nothing scans until the user opens the Buddy window.
 ELECTRON_ARGS+=('--enable-blink-features=WebBluetooth')
 
-case $platform_mode in
-    x11)
-        log 'X11 session detected'
-        if [[ -n "${CLAUDE_APPIMAGE_PATH:-}" ]]; then
-            log 'AppImage X11: adding --no-sandbox (FUSE cannot carry SUID)'
-            ELECTRON_ARGS+=('--no-sandbox')
-        fi
-        ;;
-    xwayland)
-        log 'Using X11 backend via XWayland (CLAUDE_USE_XWAYLAND=1)'
-        ELECTRON_ARGS+=('--no-sandbox' '--ozone-platform=x11')
-        ;;
-    wayland)
-        log 'Using native Wayland backend'
-        ELECTRON_ARGS+=('--no-sandbox')
-        if [[ "${CLAUDE_NATIVE_TITLEBAR:-}" == '1' ]]; then
-            ELECTRON_ARGS+=('--enable-features=UseOzonePlatform,WaylandWindowDecorations,GlobalShortcutsPortal')
-        else
-            ELECTRON_ARGS+=('--enable-features=UseOzonePlatform,GlobalShortcutsPortal')
-        fi
-        ELECTRON_ARGS+=('--ozone-platform=wayland')
-        ELECTRON_ARGS+=('--enable-wayland-ime')
-        ELECTRON_ARGS+=('--wayland-text-input-version=3')
-        # On GPUs where Chromium (Electron 42) brings up Vulkan - real Intel/AMD/
-        # NVIDIA with a recent Mesa driver - it refuses to pair Vulkan with
-        # --ozone-platform=wayland: the Wayland surface factory fails and NO window
-        # is ever created (silent no-UI startup, seen on Ubuntu/GNOME Wayland).
-        # Machines where Chromium never selects Vulkan (VMs, software GL) don't hit
-        # this, and disabling the feature there is a harmless no-op. Chromium refuses
-        # Vulkan+Wayland outright, so this removes no working render path. x11/
-        # xwayland use --ozone-platform=x11 and keep Vulkan. Opt out: CLAUDE_ENABLE_VULKAN=1.
-        # log line: wayland_surface_factory.cc "'--ozone-platform=wayland' is not compatible with Vulkan"
-        if [[ "${CLAUDE_ENABLE_VULKAN:-}" != '1' ]]; then
-            ELECTRON_ARGS+=('--disable-features=Vulkan')
-            log 'Vulkan disabled for Wayland surface compatibility (set CLAUDE_ENABLE_VULKAN=1 to keep it)'
-        else
-            log 'Vulkan kept on Wayland (CLAUDE_ENABLE_VULKAN=1)'
-        fi
-        ;;
+case ${platform_mode} in
+	x11)
+		log 'X11 session detected'
+		if [[ -n "${CLAUDE_APPIMAGE_PATH:-}" ]]; then
+			log 'AppImage X11: adding --no-sandbox (FUSE cannot carry SUID)'
+			ELECTRON_ARGS+=('--no-sandbox')
+		fi
+		;;
+	xwayland)
+		log 'Using X11 backend via XWayland (CLAUDE_USE_XWAYLAND=1)'
+		ELECTRON_ARGS+=('--no-sandbox' '--ozone-platform=x11')
+		;;
+	wayland)
+		log 'Using native Wayland backend'
+		ELECTRON_ARGS+=('--no-sandbox')
+		if [[ "${CLAUDE_NATIVE_TITLEBAR:-}" == '1' ]]; then
+			ELECTRON_ARGS+=('--enable-features=UseOzonePlatform,WaylandWindowDecorations,GlobalShortcutsPortal')
+		else
+			ELECTRON_ARGS+=('--enable-features=UseOzonePlatform,GlobalShortcutsPortal')
+		fi
+		ELECTRON_ARGS+=('--ozone-platform=wayland')
+		ELECTRON_ARGS+=('--enable-wayland-ime')
+		ELECTRON_ARGS+=('--wayland-text-input-version=3')
+		# On GPUs where Chromium (Electron 42) brings up Vulkan - real Intel/AMD/
+		# NVIDIA with a recent Mesa driver - it refuses to pair Vulkan with
+		# --ozone-platform=wayland: the Wayland surface factory fails and NO window
+		# is ever created (silent no-UI startup, seen on Ubuntu/GNOME Wayland).
+		# Machines where Chromium never selects Vulkan (VMs, software GL) don't hit
+		# this, and disabling the feature there is a harmless no-op. Chromium refuses
+		# Vulkan+Wayland outright, so this removes no working render path. x11/
+		# xwayland use --ozone-platform=x11 and keep Vulkan. Opt out: CLAUDE_ENABLE_VULKAN=1.
+		# log line: wayland_surface_factory.cc "'--ozone-platform=wayland' is not compatible with Vulkan"
+		if [[ "${CLAUDE_ENABLE_VULKAN:-}" != '1' ]]; then
+			ELECTRON_ARGS+=('--disable-features=Vulkan')
+			log 'Vulkan disabled for Wayland surface compatibility (set CLAUDE_ENABLE_VULKAN=1 to keep it)'
+		else
+			log 'Vulkan kept on Wayland (CLAUDE_ENABLE_VULKAN=1)'
+		fi
+		;;
+	*) ;;
 esac
 
 # Now that platform_mode and electron_major are known, service the --diagnose
 # subcommand if requested. Exits here — does not launch Electron.
 if [[ -n ${_diagnose_requested:-} ]]; then
-    echo "platform_mode = $platform_mode"
-    echo "electron_major = $electron_major"
-    # Note: CLAUDE_DISABLE_GPU flags are appended after this point, so they are
-    # not reflected here; the platform/Vulkan/titlebar flags are.
-    echo "electron_args = ${ELECTRON_ARGS[*]}"
-    _diagnose
-    exit 0
+	echo "platform_mode = ${platform_mode}"
+	echo "electron_major = ${electron_major}"
+	# Note: CLAUDE_DISABLE_GPU flags are appended after this point, so they are
+	# not reflected here; the platform/Vulkan/titlebar flags are.
+	echo "electron_args = ${ELECTRON_ARGS[*]}"
+	_diagnose
+	exit 0
 fi
 
 # ---------------------------------------------------------------------------
@@ -1583,21 +1651,23 @@ fi
 # GPU-process init ("GPU process isn't usable. Goodbye.") but work fine via
 # ANGLE-GL, which keeps GPU acceleration. Try this before CLAUDE_DISABLE_GPU.
 case "${CLAUDE_GPU_BACKEND:-}" in
-    angle-gl)
-        log 'GPU backend set to ANGLE-GL (CLAUDE_GPU_BACKEND=angle-gl)'
-        ELECTRON_ARGS+=('--use-gl=angle' '--use-angle=gl')
-        ;;
+	angle-gl)
+		log 'GPU backend set to ANGLE-GL (CLAUDE_GPU_BACKEND=angle-gl)'
+		ELECTRON_ARGS+=('--use-gl=angle' '--use-angle=gl')
+		;;
+	*) ;;
 esac
 
 case "${CLAUDE_DISABLE_GPU:-}" in
-    1|compositing)
-        log 'GPU compositing disabled (CLAUDE_DISABLE_GPU)'
-        ELECTRON_ARGS+=('--disable-gpu-compositing')
-        ;;
-    full)
-        log 'GPU fully disabled (CLAUDE_DISABLE_GPU=full)'
-        ELECTRON_ARGS+=('--disable-gpu')
-        ;;
+	1 | compositing)
+		log 'GPU compositing disabled (CLAUDE_DISABLE_GPU)'
+		ELECTRON_ARGS+=('--disable-gpu-compositing')
+		;;
+	full)
+		log 'GPU fully disabled (CLAUDE_DISABLE_GPU=full)'
+		ELECTRON_ARGS+=('--disable-gpu')
+		;;
+	*) ;;
 esac
 
 # ---------------------------------------------------------------------------
@@ -1628,107 +1698,120 @@ esac
 #   an explicit --password-store=... argument always wins (detection skipped)
 
 _secret_service_available() {
-    # Owned or activatable org.freedesktop.secrets on the session bus.
-    # busctl list shows both running and activatable names.
-    if command -v busctl &>/dev/null; then
-        busctl --user --no-pager list 2>/dev/null \
-            | grep -q '^org\.freedesktop\.secrets\b'
-        return
-    fi
-    if command -v dbus-send &>/dev/null; then
-        {
-            dbus-send --session --print-reply --dest=org.freedesktop.DBus \
-                /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null
-            dbus-send --session --print-reply --dest=org.freedesktop.DBus \
-                /org/freedesktop/DBus org.freedesktop.DBus.ListActivatableNames 2>/dev/null
-        } | grep -q '"org\.freedesktop\.secrets"'
-        return
-    fi
-    if command -v gdbus &>/dev/null; then
-        gdbus call --session --dest org.freedesktop.DBus \
-            --object-path /org/freedesktop/DBus \
-            --method org.freedesktop.DBus.ListActivatableNames 2>/dev/null \
-            | grep -q 'org\.freedesktop\.secrets'
-        return
-    fi
-    return 1
+	# Owned or activatable org.freedesktop.secrets on the session bus.
+	# busctl list shows both running and activatable names.
+	if command -v busctl &>/dev/null; then
+		busctl --user --no-pager list 2>/dev/null \
+			| grep -q '^org\.freedesktop\.secrets\b'
+		return
+	fi
+	if command -v dbus-send &>/dev/null; then
+		{
+			dbus-send --session --print-reply --dest=org.freedesktop.DBus \
+				/org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null
+			dbus-send --session --print-reply --dest=org.freedesktop.DBus \
+				/org/freedesktop/DBus org.freedesktop.DBus.ListActivatableNames 2>/dev/null
+		} | grep -q '"org\.freedesktop\.secrets"'
+		return
+	fi
+	if command -v gdbus &>/dev/null; then
+		gdbus call --session --dest org.freedesktop.DBus \
+			--object-path /org/freedesktop/DBus \
+			--method org.freedesktop.DBus.ListActivatableNames 2>/dev/null \
+			| grep -q 'org\.freedesktop\.secrets'
+		return
+	fi
+	return 1
 }
 
 _kwallet_available() {
-    # Whether kwalletd can actually serve os_crypt. A bus-name check is NOT
-    # enough here: org.kde.kwalletd6 stays D-Bus activatable even when KWallet
-    # is switched off, and activation then fails ("unit failed"). So probe with
-    # a real method call, bounded by a short D-Bus timeout - the app's own
-    # kwalletd pre-flight warns that this call can otherwise block behind the
-    # wallet-creation wizard when kwalletd runs but has no wallet yet.
-    local _v _svc _obj
-    for _v in 6 5; do
-        _svc="org.kde.kwalletd${_v}"
-        _obj="/modules/kwalletd${_v}"
-        if command -v busctl &>/dev/null; then
-            busctl --user --no-pager --timeout=5 call \
-                "$_svc" "$_obj" org.kde.KWallet wallets &>/dev/null && return 0
-        elif command -v dbus-send &>/dev/null; then
-            dbus-send --session --print-reply --reply-timeout=5000 \
-                --dest="$_svc" "$_obj" org.kde.KWallet.wallets &>/dev/null && return 0
-        elif command -v gdbus &>/dev/null; then
-            gdbus call --session --timeout 5 --dest "$_svc" \
-                --object-path "$_obj" --method org.kde.KWallet.wallets &>/dev/null && return 0
-        else
-            # No way to probe - keep Chromium's KDE default untouched.
-            return 0
-        fi
-    done
-    return 1
+	# Whether kwalletd can actually serve os_crypt. A bus-name check is NOT
+	# enough here: org.kde.kwalletd6 stays D-Bus activatable even when KWallet
+	# is switched off, and activation then fails ("unit failed"). So probe with
+	# a real method call, bounded by a short D-Bus timeout - the app's own
+	# kwalletd pre-flight warns that this call can otherwise block behind the
+	# wallet-creation wizard when kwalletd runs but has no wallet yet.
+	local _v _svc _obj
+	for _v in 6 5; do
+		_svc="org.kde.kwalletd${_v}"
+		_obj="/modules/kwalletd${_v}"
+		if command -v busctl &>/dev/null; then
+			busctl --user --no-pager --timeout=5 call \
+				"${_svc}" "${_obj}" org.kde.KWallet wallets &>/dev/null && return 0
+		elif command -v dbus-send &>/dev/null; then
+			dbus-send --session --print-reply --reply-timeout=5000 \
+				--dest="${_svc}" "${_obj}" org.kde.KWallet.wallets &>/dev/null && return 0
+		elif command -v gdbus &>/dev/null; then
+			gdbus call --session --timeout 5 --dest "${_svc}" \
+				--object-path "${_obj}" --method org.kde.KWallet.wallets &>/dev/null && return 0
+		else
+			# No way to probe - keep Chromium's KDE default untouched.
+			return 0
+		fi
+	done
+	return 1
 }
 
 _pw_store_explicit=''
 for _arg in "$@"; do
-    if [[ "$_arg" == --password-store=* ]]; then
-        _pw_store_explicit=1
-        break
-    fi
+	if [[ "${_arg}" == --password-store=* ]]; then
+		_pw_store_explicit=1
+		break
+	fi
 done
-if [[ -z "$_pw_store_explicit" ]]; then
-    case "${CLAUDE_PASSWORD_STORE:-}" in
-        '')
-            # Skip desktops Chromium already maps to a keyring backend
-            # (GNOME-family -> libsecret, KDE -> kwallet). KDE is verified
-            # below, since that mapping is a dead end without kwalletd.
-            _de_keyring_native=''
-            _de_is_kde=''
-            IFS=':' read -ra _de_parts <<< "${XDG_CURRENT_DESKTOP:-}"
-            for _de in "${_de_parts[@]}"; do
-                case "${_de,,}" in
-                    kde)
-                        _de_keyring_native=1
-                        _de_is_kde=1
-                        break
-                        ;;
-                    gnome|unity|deepin|cinnamon|x-cinnamon|pantheon|ukui)
-                        _de_keyring_native=1
-                        break
-                        ;;
-                esac
-            done
-            # Chromium's kwallet mapping is only real if kwalletd answers.
-            if [[ -n "$_de_is_kde" ]] && ! _kwallet_available; then
-                log "kwalletd does not answer on the session bus - KDE's kwallet backend would yield no encryption, falling back to Secret Service detection"
-                _de_keyring_native=''
-            fi
-            if [[ -z "$_de_keyring_native" ]] && _secret_service_available; then
-                log "Secret Service detected on session bus; XDG_CURRENT_DESKTOP='${XDG_CURRENT_DESKTOP:-}' gets no keyring backend from Chromium - adding --password-store=gnome-libsecret"
-                ELECTRON_ARGS+=('--password-store=gnome-libsecret')
-            fi
-            ;;
-        auto)
-            # Opt-out: let Chromium's own detection run unmodified.
-            ;;
-        *)
-            log "Password store forced via CLAUDE_PASSWORD_STORE=${CLAUDE_PASSWORD_STORE}"
-            ELECTRON_ARGS+=("--password-store=${CLAUDE_PASSWORD_STORE}")
-            ;;
-    esac
+if [[ -z "${_pw_store_explicit}" ]]; then
+	case "${CLAUDE_PASSWORD_STORE:-}" in
+		'')
+			# Skip desktops Chromium already maps to a keyring backend
+			# (GNOME-family -> libsecret, KDE -> kwallet). KDE is verified
+			# below, since that mapping is a dead end without kwalletd.
+			_de_keyring_native=''
+			_de_is_kde=''
+			IFS=':' read -ra _de_parts <<<"${XDG_CURRENT_DESKTOP:-}"
+			for _de in "${_de_parts[@]}"; do
+				case "${_de,,}" in
+					kde)
+						_de_keyring_native=1
+						_de_is_kde=1
+						break
+						;;
+					gnome | unity | deepin | cinnamon | x-cinnamon | pantheon | ukui)
+						_de_keyring_native=1
+						break
+						;;
+					*) ;;
+				esac
+			done
+			# Chromium's kwallet mapping is only real if kwalletd answers.
+			if [[ -n "${_de_is_kde}" ]]; then
+				set +e
+				_kwallet_available
+				_kwallet_status=$?
+				set -e
+				if ((_kwallet_status != 0)); then
+					log "kwalletd does not answer on the session bus - KDE's kwallet backend would yield no encryption, falling back to Secret Service detection"
+					_de_keyring_native=''
+				fi
+			fi
+			if [[ -z "${_de_keyring_native}" ]]; then
+				set +e
+				_secret_service_available
+				_secret_service_status=$?
+				set -e
+				if ((_secret_service_status == 0)); then
+					log "Secret Service detected on session bus; XDG_CURRENT_DESKTOP='${XDG_CURRENT_DESKTOP:-}' gets no keyring backend from Chromium - adding --password-store=gnome-libsecret"
+					ELECTRON_ARGS+=('--password-store=gnome-libsecret')
+				fi
+			fi
+			;;
+		auto)
+			# Opt-out: let Chromium's own detection run unmodified.
+			;;
+		*)
+			log "Password store forced via CLAUDE_PASSWORD_STORE=${CLAUDE_PASSWORD_STORE}"
+			ELECTRON_ARGS+=("--password-store=${CLAUDE_PASSWORD_STORE}")
+			;;
+	esac
 fi
 
 # ---------------------------------------------------------------------------
@@ -1740,17 +1823,17 @@ export ELECTRON_FORCE_IS_PACKAGED=true
 # In native titlebar mode, tell Electron to use the system frame.
 # In integrated mode (default), do NOT set this so titleBarOverlay works.
 if [[ "${CLAUDE_NATIVE_TITLEBAR:-}" == '1' ]]; then
-    export ELECTRON_USE_SYSTEM_TITLE_BAR=1
+	export ELECTRON_USE_SYSTEM_TITLE_BAR=1
 fi
 
 # Pass through CLAUDE_NATIVE_TITLEBAR if set (env var, not just --flag)
 if [[ -n "${CLAUDE_NATIVE_TITLEBAR:-}" ]]; then
-    export CLAUDE_NATIVE_TITLEBAR
+	export CLAUDE_NATIVE_TITLEBAR
 fi
 
 # Pass through CLAUDE_MENU_BAR if set (auto/visible/hidden)
 if [[ -n "${CLAUDE_MENU_BAR:-}" ]]; then
-    export CLAUDE_MENU_BAR
+	export CLAUDE_MENU_BAR
 fi
 
 # ---------------------------------------------------------------------------
@@ -1760,23 +1843,23 @@ fi
 # A stale lock from a crash blocks all launches with no error message.
 # The lock is a symlink whose target encodes "hostname-PID".
 
-lock_file="$config_dir/SingletonLock"
+lock_file="${config_dir}/SingletonLock"
 
 # When a profile is active, redirect Electron's userData away from the default
 # ~/.config/Claude. This is what isolates SingletonLock, logins, logs, etc.
 # For the default profile, omit the flag so behavior is byte-identical to v1.
-if [[ -n "$profile_suffix" ]]; then
-    mkdir -p "$config_dir"
-    ELECTRON_ARGS+=("--user-data-dir=$config_dir")
+if [[ -n "${profile_suffix}" ]]; then
+	mkdir -p "${config_dir}"
+	ELECTRON_ARGS+=("--user-data-dir=${config_dir}")
 fi
 
-if [[ -L "$lock_file" ]]; then
-    lock_target="$(readlink "$lock_file" 2>/dev/null)" || true
-    lock_pid="${lock_target##*-}"
-    if [[ "$lock_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$lock_pid" 2>/dev/null; then
-        rm -f "$lock_file"
-        log "Removed stale SingletonLock (PID $lock_pid no longer running)"
-    fi
+if [[ -L "${lock_file}" ]]; then
+	lock_target="$(readlink "${lock_file}" 2>/dev/null)" || true
+	lock_pid="${lock_target##*-}"
+	if [[ "${lock_pid}" =~ ^[0-9]+$ ]] && ! kill -0 "${lock_pid}" 2>/dev/null; then
+		rm -f "${lock_file}"
+		log "Removed stale SingletonLock (PID ${lock_pid} no longer running)"
+	fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -1785,15 +1868,15 @@ fi
 
 # Hard check: Electron auto-loads the exe-adjacent resources/app.asar. Runs
 # after the per-profile refresh so a just-repaired symlink farm passes.
-APP_ASAR="$(dirname "$ELECTRON_BIN")/resources/app.asar"
-if [[ ! -f "$APP_ASAR" ]]; then
-    echo >&2 "claude-desktop: resources/app.asar not found next to $ELECTRON_BIN"
-    echo >&2 '  The install is incomplete or the per-profile resources symlink is broken.'
-    echo >&2 '  Reinstall the package, or recreate the profile with --create-profile.'
-    exit 1
+APP_ASAR="$(dirname "${ELECTRON_BIN}")/resources/app.asar"
+if [[ ! -f "${APP_ASAR}" ]]; then
+	echo >&2 "claude-desktop: resources/app.asar not found next to ${ELECTRON_BIN}"
+	echo >&2 '  The install is incomplete or the per-profile resources symlink is broken.'
+	echo >&2 '  Reinstall the package, or recreate the profile with --create-profile.'
+	exit 1
 fi
 
-log "Launching: $ELECTRON_BIN (auto-loads $APP_ASAR) ${ELECTRON_ARGS[*]} $*"
+log "Launching: ${ELECTRON_BIN} (auto-loads ${APP_ASAR}) ${ELECTRON_ARGS[*]} $*"
 
 # Launch inside a named systemd user scope. The scope name (cgroup,
 # app-${DESKTOP_ID}-PID.scope) is the identity signal xdg-desktop-portal uses to
@@ -1824,12 +1907,12 @@ log "Launching: $ELECTRON_BIN (auto-loads $APP_ASAR) ${ELECTRON_ARGS[*]} $*"
 # launcher inherited, and propagate it into the scope with --setenv.
 _claude_path="${PATH:-}"
 for _d in /usr/local/bin /usr/bin /bin /usr/local/sbin /usr/sbin /sbin; do
-    case ":${_claude_path}:" in
-        *":${_d}:"*) : ;;                       # already present
-        *) _claude_path="${_claude_path:+${_claude_path}:}${_d}" ;;
-    esac
+	case ":${_claude_path}:" in
+		*":${_d}:"*) : ;; # already present
+		*) _claude_path="${_claude_path:+${_claude_path}:}${_d}" ;;
+	esac
 done
-export PATH="$_claude_path"
+export PATH="${_claude_path}"
 
 # Detach from the controlling terminal when we are a BACKGROUND job on one.
 #
@@ -1861,34 +1944,40 @@ export PATH="$_claude_path"
 # tpgid == pgid and keeps its stdio, live output and Ctrl-C untouched.
 # CLAUDE_KEEP_TTY=1 forces the old behaviour.
 _needs_tty_detach() {
-    local _pgid _tpgid
-    _pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
-    _tpgid=$(ps -o tpgid= -p $$ 2>/dev/null | tr -d ' ')
-    # tpgid is -1 with no controlling terminal, and equals pgid when we are the
-    # foreground job. Neither case can raise SIGTTIN, so leave them alone.
-    [[ -n "$_pgid" && -n "$_tpgid" && "$_tpgid" != '-1' && "$_tpgid" != "$_pgid" ]]
+	local _pgid _tpgid
+	_pgid=$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')
+	_tpgid=$(ps -o tpgid= -p $$ 2>/dev/null | tr -d ' ')
+	# tpgid is -1 with no controlling terminal, and equals pgid when we are the
+	# foreground job. Neither case can raise SIGTTIN, so leave them alone.
+	[[ -n "${_pgid}" && -n "${_tpgid}" && "${_tpgid}" != '-1' && "${_tpgid}" != "${_pgid}" ]]
 }
 
 _setsid=()
-if [[ "${CLAUDE_KEEP_TTY:-}" != '1' ]] && _needs_tty_detach; then
-    if command -v setsid &>/dev/null; then
-        _setsid=(setsid)
-        log "background job on a controlling terminal: detaching via setsid, stdio -> $STDIO_LOG"
-        exec </dev/null >>"$STDIO_LOG" 2>&1
-    else
-        log 'WARNING: background job on a controlling terminal but setsid is missing (util-linux); the app env extraction can SIGTTIN the whole session process group'
-    fi
+if [[ "${CLAUDE_KEEP_TTY:-}" != '1' ]]; then
+	set +e
+	_needs_tty_detach
+	_tty_detach_status=$?
+	set -e
+	if ((_tty_detach_status == 0)); then
+		if command -v setsid &>/dev/null; then
+			_setsid=(setsid)
+			log "background job on a controlling terminal: detaching via setsid, stdio -> ${STDIO_LOG}"
+			exec </dev/null >>"${STDIO_LOG}" 2>&1
+		else
+			log 'WARNING: background job on a controlling terminal but setsid is missing (util-linux); the app env extraction can SIGTTIN the whole session process group'
+		fi
+	fi
 fi
 
 if [[ "${CLAUDE_DISABLE_SYSTEMD_SCOPE:-}" != '1' ]] \
-    && command -v systemd-run &>/dev/null \
-    && [[ -n "${XDG_RUNTIME_DIR:-}" ]] \
-    && [[ -S "${XDG_RUNTIME_DIR}/systemd/private" ]]; then
-    exec "${_setsid[@]}" systemd-run --user --scope --quiet \
-        --unit="app-${DESKTOP_ID}-$$.scope" \
-        --description='Claude Desktop' \
-        --setenv="PATH=${_claude_path}" \
-        -- "$ELECTRON_BIN" "${ELECTRON_ARGS[@]}" "$@"
+	&& command -v systemd-run &>/dev/null \
+	&& [[ -n "${XDG_RUNTIME_DIR:-}" ]] \
+	&& [[ -S "${XDG_RUNTIME_DIR}/systemd/private" ]]; then
+	exec "${_setsid[@]}" systemd-run --user --scope --quiet \
+		--unit="app-${DESKTOP_ID}-$$.scope" \
+		--description='Claude Desktop' \
+		--setenv="PATH=${_claude_path}" \
+		-- "${ELECTRON_BIN}" "${ELECTRON_ARGS[@]}" "$@"
 fi
 log 'systemd user scope unavailable (binary missing, socket unreachable, or CLAUDE_DISABLE_SYSTEMD_SCOPE=1): launching without scope; xdg-desktop-portal may fail to identify the app'
-exec "${_setsid[@]}" "$ELECTRON_BIN" "${ELECTRON_ARGS[@]}" "$@"
+exec "${_setsid[@]}" "${ELECTRON_BIN}" "${ELECTRON_ARGS[@]}" "$@"

@@ -33,11 +33,11 @@ if [[ "${1:-}" = "--arch" ]]; then
 fi
 
 case "${APPIMAGE_ARCH}" in
-x86_64 | aarch64) ;;
-*)
-	log_error "Unsupported architecture: ${APPIMAGE_ARCH} (supported: x86_64, aarch64)"
-	exit 1
-	;;
+	x86_64 | aarch64) ;;
+	*)
+		log_error "Unsupported architecture: ${APPIMAGE_ARCH} (supported: x86_64, aarch64)"
+		exit 1
+		;;
 esac
 
 # Parse positional arguments

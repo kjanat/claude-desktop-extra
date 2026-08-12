@@ -19,8 +19,6 @@
 #
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -30,63 +28,68 @@ NC='\033[0m'
 ELECTRON_BIN="$1"
 TIMEOUT_SECONDS="${SMOKE_TIMEOUT_SECONDS:-15}"
 STDERR_LOG=$(mktemp)
-trap "rm -f $STDERR_LOG" EXIT
+trap 'rm -f "$STDERR_LOG"' EXIT
 
-if [ -z "$ELECTRON_BIN" ]; then
-    echo "Usage: $0 <electron_binary>"
-    exit 2
+if [[ -z "${ELECTRON_BIN}" ]]; then
+	echo "Usage: $0 <electron_binary>"
+	exit 2
 fi
 
-if [ ! -x "$ELECTRON_BIN" ]; then
-    echo -e "${RED}[FAIL]${NC} Electron binary not found or not executable: $ELECTRON_BIN"
-    exit 2
+if [[ ! -x "${ELECTRON_BIN}" ]]; then
+	echo -e "${RED}[FAIL]${NC} Electron binary not found or not executable: ${ELECTRON_BIN}"
+	exit 2
 fi
 
-APP_ASAR="$(dirname "$ELECTRON_BIN")/resources/app.asar"
-if [ ! -f "$APP_ASAR" ]; then
-    echo -e "${RED}[FAIL]${NC} exe-adjacent resources/app.asar not found: $APP_ASAR"
-    exit 2
+APP_ASAR="$(dirname "${ELECTRON_BIN}")/resources/app.asar"
+if [[ ! -f "${APP_ASAR}" ]]; then
+	echo -e "${RED}[FAIL]${NC} exe-adjacent resources/app.asar not found: ${APP_ASAR}"
+	exit 2
 fi
 
-if [ "${SMOKE_WAYLAND:-0}" = "1" ]; then
-    if [ -z "${WAYLAND_DISPLAY:-}" ] || [ -z "${XDG_RUNTIME_DIR:-}" ] \
-        || [ ! -S "$XDG_RUNTIME_DIR/$WAYLAND_DISPLAY" ]; then
-        echo -e "${RED}[FAIL]${NC} SMOKE_WAYLAND=1 but no live Wayland socket at \$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY"
-        exit 2
-    fi
+if [[ "${SMOKE_WAYLAND:-0}" = "1" ]]; then
+	if [[ -z "${WAYLAND_DISPLAY:-}" ]] || [[ -z "${XDG_RUNTIME_DIR:-}" ]] \
+		|| [[ ! -S "${XDG_RUNTIME_DIR}/${WAYLAND_DISPLAY}" ]]; then
+		echo -e "${RED}[FAIL]${NC} SMOKE_WAYLAND=1 but no live Wayland socket at \$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY"
+		exit 2
+	fi
 elif ! command -v xvfb-run &>/dev/null; then
-    echo -e "${RED}[FAIL]${NC} xvfb-run not found (install xorg-server-xvfb)"
-    exit 2
+	echo -e "${RED}[FAIL]${NC} xvfb-run not found (install xorg-server-xvfb)"
+	exit 2
 fi
 
 echo "Starting Electron smoke test..."
-echo "  electron: $ELECTRON_BIN"
-echo "  app.asar: $APP_ASAR (auto-loaded)"
-echo "  display:  $([ "${SMOKE_WAYLAND:-0}" = "1" ] && echo "wayland ($WAYLAND_DISPLAY)" || echo "xvfb (x11)")"
+echo "  electron: ${ELECTRON_BIN}"
+echo "  app.asar: ${APP_ASAR} (auto-loaded)"
+if [[ "${SMOKE_WAYLAND:-0}" = "1" ]]; then
+	display_description="wayland (${WAYLAND_DISPLAY})"
+else
+	display_description="xvfb (x11)"
+fi
+echo "  display:  ${display_description}"
 echo "  timeout:  ${TIMEOUT_SECONDS}s"
 
 # Verify chrome-sandbox permissions (SUID root required for sandbox to work)
 # Skip with SKIP_SANDBOX_CHECK=1 (e.g. for extracted AppImages where SUID can't be preserved)
-ELECTRON_DIR="$(dirname "$ELECTRON_BIN")"
-SANDBOX_BIN="$ELECTRON_DIR/chrome-sandbox"
-if [ "${SKIP_SANDBOX_CHECK:-0}" = "1" ]; then
-    echo -e "${YELLOW}[SKIP]${NC} chrome-sandbox permission check (SKIP_SANDBOX_CHECK=1)"
-elif [ -f "$SANDBOX_BIN" ]; then
-    SANDBOX_PERMS=$(stat -c '%a' "$SANDBOX_BIN" 2>/dev/null || stat -f '%Lp' "$SANDBOX_BIN" 2>/dev/null)
-    SANDBOX_OWNER=$(stat -c '%U' "$SANDBOX_BIN" 2>/dev/null || stat -f '%Su' "$SANDBOX_BIN" 2>/dev/null)
-    if [ "$SANDBOX_PERMS" != "4755" ]; then
-        echo -e "${RED}[FAIL]${NC} chrome-sandbox has mode $SANDBOX_PERMS (expected 4755)"
-        echo "  Fix: chmod 4755 $SANDBOX_BIN"
-        exit 1
-    fi
-    if [ "$SANDBOX_OWNER" != "root" ]; then
-        echo -e "${RED}[FAIL]${NC} chrome-sandbox owned by $SANDBOX_OWNER (expected root)"
-        echo "  Fix: chown root:root $SANDBOX_BIN"
-        exit 1
-    fi
-    echo -e "${GREEN}[OK]${NC} chrome-sandbox permissions correct (4755, root)"
+ELECTRON_DIR="$(dirname "${ELECTRON_BIN}")"
+SANDBOX_BIN="${ELECTRON_DIR}/chrome-sandbox"
+if [[ "${SKIP_SANDBOX_CHECK:-0}" = "1" ]]; then
+	echo -e "${YELLOW}[SKIP]${NC} chrome-sandbox permission check (SKIP_SANDBOX_CHECK=1)"
+elif [[ -f "${SANDBOX_BIN}" ]]; then
+	SANDBOX_PERMS=$(stat -c '%a' "${SANDBOX_BIN}" 2>/dev/null || stat -f '%Lp' "${SANDBOX_BIN}" 2>/dev/null)
+	SANDBOX_OWNER=$(stat -c '%U' "${SANDBOX_BIN}" 2>/dev/null || stat -f '%Su' "${SANDBOX_BIN}" 2>/dev/null)
+	if [[ "${SANDBOX_PERMS}" != "4755" ]]; then
+		echo -e "${RED}[FAIL]${NC} chrome-sandbox has mode ${SANDBOX_PERMS} (expected 4755)"
+		echo "  Fix: chmod 4755 ${SANDBOX_BIN}"
+		exit 1
+	fi
+	if [[ "${SANDBOX_OWNER}" != "root" ]]; then
+		echo -e "${RED}[FAIL]${NC} chrome-sandbox owned by ${SANDBOX_OWNER} (expected root)"
+		echo "  Fix: chown root:root ${SANDBOX_BIN}"
+		exit 1
+	fi
+	echo -e "${GREEN}[OK]${NC} chrome-sandbox permissions correct (4755, root)"
 else
-    echo -e "${YELLOW}[SKIP]${NC} chrome-sandbox not found at $SANDBOX_BIN (system electron?)"
+	echo -e "${YELLOW}[SKIP]${NC} chrome-sandbox not found at ${SANDBOX_BIN} (system electron?)"
 fi
 
 # Start the app in a virtual framebuffer (no app argument: Electron auto-loads
@@ -101,52 +104,59 @@ SMOKE_USERDATA=$(mktemp -d)
 # race ("Directory not empty") - and under set -e that failure would become the
 # script's exit code AFTER the test already passed. Drain the process group,
 # then retry the rm, and never let cleanup decide the verdict.
+# shellcheck disable=SC2329 # Invoked indirectly by the EXIT trap below.
 _cleanup() {
-    rm -f "$STDERR_LOG" || true
-    if [ -n "${APP_PID:-}" ]; then
-        for _ in 1 2 3 4 5 6 7 8 9 10; do
-            kill -0 -- "-$APP_PID" 2>/dev/null || break
-            sleep 1
-        done
-    fi
-    rm -rf "$SMOKE_USERDATA" 2>/dev/null || { sleep 2; rm -rf "$SMOKE_USERDATA" || true; }
+	rm -f "${STDERR_LOG}" || true
+	if [[ -n "${APP_PID:-}" ]]; then
+		for _ in 1 2 3 4 5 6 7 8 9 10; do
+			kill -0 -- "-${APP_PID}" 2>/dev/null || break
+			sleep 1
+		done
+	fi
+	rm -rf "${SMOKE_USERDATA}" 2>/dev/null || {
+		sleep 2
+		rm -rf "${SMOKE_USERDATA}" || true
+	}
 }
 trap _cleanup EXIT
-if [ "${SMOKE_WAYLAND:-0}" = "1" ]; then
-    setsid "$ELECTRON_BIN" --ozone-platform=wayland --no-sandbox \
-        --user-data-dir="$SMOKE_USERDATA" 2>"$STDERR_LOG" &
+if [[ "${SMOKE_WAYLAND:-0}" = "1" ]]; then
+	setsid "${ELECTRON_BIN}" --ozone-platform=wayland --no-sandbox \
+		--user-data-dir="${SMOKE_USERDATA}" 2>"${STDERR_LOG}" &
 else
-    setsid xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" \
-        "$ELECTRON_BIN" --no-sandbox --user-data-dir="$SMOKE_USERDATA" 2>"$STDERR_LOG" &
+	setsid xvfb-run --auto-servernum --server-args="-screen 0 1280x720x24" \
+		"${ELECTRON_BIN}" --no-sandbox --user-data-dir="${SMOKE_USERDATA}" 2>"${STDERR_LOG}" &
 fi
 APP_PID=$!
-_kill_app_tree() { kill -- "-$APP_PID" 2>/dev/null || kill "$APP_PID" 2>/dev/null || true; }
+_kill_app_tree() { kill -- "-${APP_PID}" 2>/dev/null || kill "${APP_PID}" 2>/dev/null || true; }
 
 # Poll every second — fail if process dies early
 ELAPSED=0
-while [ $ELAPSED -lt $TIMEOUT_SECONDS ]; do
-    if ! kill -0 "$APP_PID" 2>/dev/null; then
-        EXIT_CODE=0; wait "$APP_PID" 2>/dev/null || EXIT_CODE=$?
-        echo -e "${RED}[FAIL]${NC} App crashed after ${ELAPSED}s (exit code: $EXIT_CODE)"
-        echo "--- stderr output ---"
-        cat "$STDERR_LOG"
-        echo "---"
-        exit 1
-    fi
-    sleep 1
-    ELAPSED=$((ELAPSED + 1))
+while [[ "${ELAPSED}" -lt "${TIMEOUT_SECONDS}" ]]; do
+	if ! kill -0 "${APP_PID}" 2>/dev/null; then
+		EXIT_CODE=0
+		wait "${APP_PID}" 2>/dev/null || EXIT_CODE=$?
+		echo -e "${RED}[FAIL]${NC} App crashed after ${ELAPSED}s (exit code: ${EXIT_CODE})"
+		echo "--- stderr output ---"
+		cat "${STDERR_LOG}"
+		echo "---"
+		exit 1
+	fi
+	sleep 1
+	ELAPSED=$((ELAPSED + 1))
 done
 
 # Check stderr for JS runtime errors.
 ERROR_PATTERN='(TypeError|ReferenceError|SyntaxError|Cannot read properties|ENOENT)'
-ERRORS=$(grep -E "$ERROR_PATTERN" "$STDERR_LOG" || true)
-if [ -n "$ERRORS" ]; then
-    echo -e "${RED}[FAIL]${NC} Runtime JS errors detected:"
-    echo "$ERRORS"
-    _kill_app_tree; wait "$APP_PID" 2>/dev/null || true
-    exit 1
+ERRORS=$(grep -E "${ERROR_PATTERN}" "${STDERR_LOG}" || true)
+if [[ -n "${ERRORS}" ]]; then
+	echo -e "${RED}[FAIL]${NC} Runtime JS errors detected:"
+	echo "${ERRORS}"
+	_kill_app_tree
+	wait "${APP_PID}" 2>/dev/null || true
+	exit 1
 fi
 
-_kill_app_tree; wait "$APP_PID" 2>/dev/null || true
+_kill_app_tree
+wait "${APP_PID}" 2>/dev/null || true
 echo -e "${GREEN}[PASS]${NC} Smoke test passed — app survived ${TIMEOUT_SECONDS}s"
 exit 0
