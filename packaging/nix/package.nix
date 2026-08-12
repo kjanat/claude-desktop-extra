@@ -48,9 +48,9 @@
 
 let
   # Updated automatically by CI (build-and-release.yml) on each release.
-  version = "1.26832.0"; # pkgver: always the upstream Claude Desktop version
-  pkgrel = "5"; # Arch-style release counter: bumped on re-releases of the same upstream version, reset to 1 on version bumps
-  hash = "sha256-N1X1KQzUam8TWoQ22f8ESyCi0eIYQG/V+3Wfi45bia0=";
+  version = "1.28929.0"; # pkgver: always the upstream Claude Desktop version
+  pkgrel = "1"; # Arch-style release counter: bumped on re-releases of the same upstream version, reset to 1 on version bumps
+  hash = "sha256-n+BikzgKxqmAqhuQ62ITt62INjsNt3RmIZx+JKqQwhw=";
   # Every release publishes under its own tag (v<version> for pkgrel 1,
   # v<version>-<pkgrel> for re-releases) and its assets are never overwritten
   # afterwards, so this URL is immutable and a pinned flake.lock keeps fetching
